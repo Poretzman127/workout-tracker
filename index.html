@@ -500,8 +500,8 @@ function metricRow(name, w){
 /* ----- workout modal ----- */
 let modalName = null, modalPriorDate = null, modalRange = 'all';
 // chart time-range filter
-const RANGES = {'7d':7, '30d':30, '1y':365, 'all':null};
-const RANGE_LABEL = {'7d':'7D', '30d':'30D', '1y':'1Y', 'all':'All'};
+const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
+const RANGE_LABEL = {'7d':'7D', '15d':'15D', '30d':'30D', '1y':'1Y', 'all':'All'};
 function rangeCutoff(range){
   if(!RANGES[range]) return null;
   const d = new Date(); d.setDate(d.getDate()-RANGES[range]);
