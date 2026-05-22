@@ -274,6 +274,13 @@ function fmtDateLong(s){
 }
 function fmtTime(ms){ return new Date(ms).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
 function lastSetTime(sets){ const ts=(sets||[]).map(s=>s.t).filter(Boolean); return ts.length?Math.max(...ts):null; }
+// most-recent-activity epoch ms for an exercise (set timestamp if present, else last session date) — used to sort recently-worked exercises to the top
+function lastActivity(w){
+  const dts=sortedDates((w||{}).sessions); if(!dts.length) return 0;
+  const last=dts[dts.length-1], sets=w.sessions[last];
+  if(Array.isArray(sets)){ const lt=lastSetTime(sets); if(lt) return lt; }
+  return new Date(last+'T00:00:00').getTime();
+}
 function sessionOutput(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0)*(s.r||0), 0); }
 function sessionReps(sets){ return (sets||[]).reduce((a,s)=>a + (s.r||0), 0); }
 function sortedDates(obj){ return Object.keys(obj||{}).sort(); }      // asc
@@ -412,9 +419,13 @@ function workoutsByGroup(gid){
   return Object.keys(DATA.workouts)
     .filter(n=>DATA.workouts[n].group===gid)
     .sort((a,b)=>{                                  // pin daily-total metrics to the top
-      const am=isMetric(DATA.workouts[a]), bm=isMetric(DATA.workouts[b]);
+      const wa=DATA.workouts[a], wb=DATA.workouts[b];
+      const am=isMetric(wa), bm=isMetric(wb);
       if(am!==bm) return am?-1:1;
-      return a.localeCompare(b);
+      if(am&&bm) return a.localeCompare(b);         // metrics: keep alphabetical
+      const la=lastActivity(wa), lb=lastActivity(wb);
+      if(la!==lb) return lb-la;                      // most recently worked first
+      return a.localeCompare(b);                     // never logged: alphabetical
     });
 }
 function setLabel(gid, s){
