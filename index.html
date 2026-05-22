@@ -498,7 +498,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = 'all';
+let modalName = null, modalPriorDate = null, modalRange = '7d';
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
 const RANGE_LABEL = {'7d':'7D', '15d':'15D', '30d':'30D', '1y':'1Y', 'all':'All'};
@@ -514,7 +514,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null;
+  modalName = name; modalPriorDate = null; modalRange = '7d';   // default each open to 7 days
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -612,8 +612,8 @@ function renderMetricModal(){
   const cdts = filterDates(dts);
   const pts = cdts.map(d=>({label:fmtDate(d), value:+w.sessions[d]}));
   const latest = dts.length ? +w.sessions[dts[dts.length-1]] : null;
-  const last7 = dts.slice(-7);
-  const avg7 = last7.length ? last7.reduce((a,d)=>a+(+w.sessions[d]),0)/last7.length : null;
+  const rangeAvg = cdts.length ? cdts.reduce((a,d)=>a+(+w.sessions[d]),0)/cdts.length : null;
+  const avgLabel = modalRange==='all' ? 'All-time avg' : `${RANGE_LABEL[modalRange]} avg`;
   const todayVal = w.sessions[today];
 
   const m = document.getElementById('w-modal');
@@ -622,7 +622,7 @@ function renderMetricModal(){
     <div class="modal-sub">Cardio · daily ${mi.unit} · ${dts.length} day${dts.length===1?'':'s'} logged</div>
     <div class="stat-strip">
       <div class="tcard"><div class="tn">Latest</div><div class="tv">${fmtMetricVal(w,latest)}<small style="font-size:11px"> ${mi.unit}</small></div></div>
-      <div class="tcard"><div class="tn">7-day avg</div><div class="tv">${fmtMetricVal(w,avg7)}</div></div>
+      <div class="tcard"><div class="tn">${avgLabel}</div><div class="tv">${fmtMetricVal(w,rangeAvg)}</div></div>
       <div class="tcard"><div class="tn">Days</div><div class="tv">${dts.length}</div></div>
     </div>
     ${rangeToggle()}
