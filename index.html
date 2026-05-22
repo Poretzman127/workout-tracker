@@ -200,6 +200,8 @@ const LS_DATA = 'wt_data';
 const LS_USDA = 'wt_usdakey';        // optional USDA FoodData Central key (string)
 const USDA_DEMO = 'DEMO_KEY';        // shared demo key — works out of the box, rate-limited
 const usdaKey = () => (localStorage.getItem(LS_USDA)||'').trim() || USDA_DEMO;
+const LS_CN   = 'wt_cnkey';          // CalorieNinjas key — enables plain-language entry
+const cnKey   = () => (localStorage.getItem(LS_CN)||'').trim();
 
 const GROUPS = [
   {id:'back-bicep',   name:'Back & Bicep',  kind:'lift'},
@@ -559,10 +561,17 @@ function renderNutrition(){
       <div class="tcard c"><div class="tn">Carbs</div><div class="tv">${Math.round(tot.c)}<small style="font-size:11px">g</small></div></div>
       <div class="tcard f"><div class="tn">Fat</div><div class="tv">${Math.round(tot.f)}<small style="font-size:11px">g</small></div></div>
     </div>
-    <div class="food-input">
-      <input id="food-q" placeholder="Search a food — e.g. chicken breast, banana, oatmeal">
-      <button class="btn" id="food-search">Search</button>
-    </div>
+    ${cnKey()
+      ? `<div class="food-input">
+          <input id="food-q" placeholder="What did you eat? e.g. 2 eggs and a banana">
+          <button class="btn" id="food-add">+ Add</button>
+        </div>`
+      : `<div class="banner"><b>Tip:</b> add a free CalorieNinjas key in ⚙ Settings to log meals in plain words
+          (“2 eggs and a banana”). Until then, search one food at a time below.</div>
+         <div class="food-input">
+          <input id="food-q" placeholder="Search a food — e.g. chicken breast, banana">
+          <button class="btn" id="food-search">Search</button>
+        </div>`}
     <div id="food-results"></div>
     <div class="table-wrap">
       <table><thead><tr><th>Food</th><th>Grams</th><th>Cal</th><th>P</th><th>C</th><th>F</th><th></th></tr></thead>
@@ -577,14 +586,22 @@ function renderNutrition(){
       }</tbody></table>
     </div>
     <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">
-      Food data: USDA FoodData Central. Works on a shared demo key out of the box; for faster, unlimited
-      lookups add your own free key in ⚙ Settings (instant, no approval).
+      ${cnKey()
+        ? 'Plain-language entry via CalorieNinjas. Want an exact, database-verified number instead? Remove the CalorieNinjas key in ⚙ Settings to switch to USDA search.'
+        : 'Food data: USDA FoodData Central (shared demo key — add your own free key in ⚙ Settings if it rate-limits).'}
     </div>`;
   root.querySelector('#d-prev').onclick = ()=>{ nutDay = shiftDay(nutDay,-1); renderNutrition(); };
   root.querySelector('#d-next').onclick = ()=>{ nutDay = shiftDay(nutDay,1); renderNutrition(); };
-  const q = root.querySelector('#food-q'), sb = root.querySelector('#food-search');
-  sb.onclick = ()=>searchFood(q.value);
-  q.onkeydown = e=>{ if(e.key==='Enter') searchFood(q.value); };
+  const q = root.querySelector('#food-q');
+  if(cnKey()){
+    const ab = root.querySelector('#food-add');
+    ab.onclick = ()=>addNL(q.value);
+    q.onkeydown = e=>{ if(e.key==='Enter') addNL(q.value); };
+  } else {
+    const sb = root.querySelector('#food-search');
+    sb.onclick = ()=>searchFood(q.value);
+    q.onkeydown = e=>{ if(e.key==='Enter') searchFood(q.value); };
+  }
   root.querySelectorAll('[data-fdel]').forEach(b=> b.onclick=()=>{
     DATA.food[day].splice(+b.dataset.fdel,1);
     if(!DATA.food[day].length) delete DATA.food[day];
@@ -645,6 +662,33 @@ async function searchFood(query){
   }catch(e){
     box.innerHTML=`<div style="padding:10px;color:var(--hot)">Couldn't search: ${e.message}`+
       `<br><span style="color:var(--muted)">If it says "Failed to fetch", tell me — I'll add a proxy.</span></div>`;
+  }
+}
+// CalorieNinjas natural-language entry — "2 eggs and a banana" → one row per food
+async function addNL(query){
+  const q=(query||'').trim(); if(!q) return;
+  const key=cnKey(); if(!key) return searchFood(q);   // no key → USDA fallback
+  const btn=document.getElementById('food-add'); const old=btn.innerHTML;
+  btn.innerHTML='<span class="spin"></span>'; btn.disabled=true;
+  try{
+    const r=await fetch('https://api.calorieninjas.com/v1/nutrition?query='+encodeURIComponent(q),
+      {headers:{'X-Api-Key':key}});
+    if(!r.ok) throw new Error('HTTP '+r.status+(r.status===401?' — check your CalorieNinjas key in ⚙ Settings':''));
+    const j=await r.json();
+    const items=j.items||[];
+    if(!items.length){ alert('Couldn’t parse that. Try simpler wording (e.g. “2 eggs, 1 banana”).'); btn.innerHTML=old; btn.disabled=false; return; }
+    if(!DATA.food[nutDay]) DATA.food[nutDay]=[];
+    items.forEach(it=>{
+      const g=it.serving_size_g||0;
+      const cal=it.calories||0, p=it.protein_g||0, c=it.carbohydrates_total_g||0, f=it.fat_total_g||0;
+      if(g>0) DATA.food[nutDay].push({desc:titleCase(it.name), g:Math.round(g),
+                 per100:{cal:cal/g*100, p:p/g*100, c:c/g*100, f:f/g*100}});
+      else    DATA.food[nutDay].push({desc:titleCase(it.name), cal,p,c,f});   // no grams → flat row
+    });
+    save(); renderNutrition();
+  }catch(e){
+    alert('Could not look that up.\n\n'+e.message);
+    btn.innerHTML=old; btn.disabled=false;
   }
 }
 
@@ -736,12 +780,19 @@ function openSettings(){
   const m = document.getElementById('s-modal');
   m.innerHTML = `
     <div class="modal-head"><h3>Settings</h3><button class="x" id="s-close">×</button></div>
-    <div class="block-title">USDA Food key (optional)</div>
-    <div class="modal-sub">Food search already works on a shared demo key. If it gets slow or rate-limited,
-      grab your own free key (instant, no approval) at
-      <a href="https://fdc.nal.usda.gov/api-key-signup.html" target="_blank" rel="noopener">fdc.nal.usda.gov/api-key-signup.html</a>
-      and paste it here (saved on this device).</div>
+    <div class="block-title">CalorieNinjas key — plain-language food entry</div>
+    <div class="modal-sub">This lets you type meals in plain words (“2 eggs and a banana”) and get macros back.
+      Free key, instant, no approval: make an account at
+      <a href="https://api-ninjas.com/register" target="_blank" rel="noopener">api-ninjas.com/register</a>,
+      then copy your key from <a href="https://api-ninjas.com/profile" target="_blank" rel="noopener">api-ninjas.com/profile</a>.</div>
+    <div class="field" style="margin-bottom:14px"><label>CalorieNinjas API key</label><input id="cn-key" value="${cnKey()}" placeholder="paste to enable plain-language entry"></div>
+
+    <div class="block-title" style="margin-top:20px">USDA key (optional, exact-search fallback)</div>
+    <div class="modal-sub">Used for precise database search when no CalorieNinjas key is set. Works on a shared demo
+      key already; for your own free instant key see
+      <a href="https://fdc.nal.usda.gov/api-key-signup.html" target="_blank" rel="noopener">fdc.nal.usda.gov/api-key-signup.html</a>.</div>
     <div class="field" style="margin-bottom:14px"><label>USDA API key</label><input id="usda-key" value="${key}" placeholder="leave blank to use the shared demo key"></div>
+
     <button class="btn" id="usda-save">Save</button>
     <div class="block-title" style="margin-top:22px">Data</div>
     <div class="modal-sub">Synced to your private cloud bin and cached on this device. Same data on phone &amp; computer.</div>
@@ -750,6 +801,7 @@ function openSettings(){
   m.querySelector('#s-close').onclick = ()=>document.getElementById('s-overlay').classList.remove('show');
   m.querySelector('#usda-save').onclick = ()=>{
     localStorage.setItem(LS_USDA, document.getElementById('usda-key').value.trim());
+    localStorage.setItem(LS_CN, document.getElementById('cn-key').value.trim());
     document.getElementById('s-overlay').classList.remove('show');
     renderNutrition();
   };
