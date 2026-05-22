@@ -111,6 +111,10 @@
     padding:5px 12px;font-size:12.5px;cursor:pointer;color:var(--txt);}
   .prior-chip:hover,.prior-chip.active{border-color:var(--accent);color:var(--accent);}
   .prior-detail{margin-top:8px;}
+  .range-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
+  .range-btn{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+    border-radius:999px;padding:4px 13px;font-size:12px;font-weight:600;cursor:pointer;}
+  .range-btn.active{background:var(--accent);color:#062014;border-color:var(--accent);}
 
   /* nutrition */
   .day-nav{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
@@ -494,7 +498,21 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null;
+let modalName = null, modalPriorDate = null, modalRange = 'all';
+// chart time-range filter
+const RANGES = {'7d':7, '30d':30, '1y':365, 'all':null};
+const RANGE_LABEL = {'7d':'7D', '30d':'30D', '1y':'1Y', 'all':'All'};
+function rangeCutoff(range){
+  if(!RANGES[range]) return null;
+  const d = new Date(); d.setDate(d.getDate()-RANGES[range]);
+  const p = n=>String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+}
+function filterDates(dts){ const c = rangeCutoff(modalRange); return c ? dts.filter(d=>d>=c) : dts; }
+function rangeToggle(){
+  return `<div class="range-row">${Object.keys(RANGES).map(r=>
+    `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
+}
 function openWorkout(name){
   modalName = name; modalPriorDate = null;
   renderModal();
@@ -509,10 +527,11 @@ function renderModal(){
   const today = todayStr();
   const todaySets = w.sessions[today] || [];
 
-  // chart points across sessions
-  const ptsOut = dts.map(d=>({label:fmtDate(d), value:sessionOutput(w.sessions[d])}));
-  const ptsRep = dts.map(d=>({label:fmtDate(d), value:sessionReps(w.sessions[d])}));
-  const ptsSet = dts.map(d=>({label:fmtDate(d), value:w.sessions[d].length}));
+  // chart points across sessions (filtered by the selected time range)
+  const cdts = filterDates(dts);
+  const ptsOut = cdts.map(d=>({label:fmtDate(d), value:sessionOutput(w.sessions[d])}));
+  const ptsRep = cdts.map(d=>({label:fmtDate(d), value:sessionReps(w.sessions[d])}));
+  const ptsSet = cdts.map(d=>({label:fmtDate(d), value:w.sessions[d].length}));
   const lastOut = ptsOut.length?ptsOut[ptsOut.length-1].value:0;
   const lastRep = ptsRep.length?ptsRep[ptsRep.length-1].value:0;
   const lastSet = ptsSet.length?ptsSet[ptsSet.length-1].value:0;
@@ -530,6 +549,7 @@ function renderModal(){
       <a href="${w.demo}" target="_blank" rel="noopener">▶ form demo</a> ·
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
 
+    ${rangeToggle()}
     <div class="charts">
       <div class="chart-card"><div class="clab">${cardio?'Work':'Total Output'}</div>
         <div class="cval">${lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut,'#34d399')}</div>
@@ -564,6 +584,7 @@ function renderModal(){
   `;
   // wire
   m.querySelector('#w-close').onclick = closeWorkout;
+  m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
   m.querySelector('#add-set').onclick = ()=>{
     const wv = parseFloat(document.getElementById('in-w').value);
     const rv = parseInt(document.getElementById('in-r').value,10);
@@ -588,7 +609,8 @@ function renderMetricModal(){
   const name = modalName, w = DATA.workouts[name], mi = metricInfo(w);
   const dts = sortedDates(w.sessions);
   const today = todayStr();
-  const pts = dts.map(d=>({label:fmtDate(d), value:+w.sessions[d]}));
+  const cdts = filterDates(dts);
+  const pts = cdts.map(d=>({label:fmtDate(d), value:+w.sessions[d]}));
   const latest = dts.length ? +w.sessions[dts[dts.length-1]] : null;
   const last7 = dts.slice(-7);
   const avg7 = last7.length ? last7.reduce((a,d)=>a+(+w.sessions[d]),0)/last7.length : null;
@@ -603,7 +625,8 @@ function renderMetricModal(){
       <div class="tcard"><div class="tn">7-day avg</div><div class="tv">${fmtMetricVal(w,avg7)}</div></div>
       <div class="tcard"><div class="tn">Days</div><div class="tv">${dts.length}</div></div>
     </div>
-    <div class="bigchart">${pts.length?bigLine(pts,mi.color):'<div class="empty">No data yet. Add a day below, or import from Apple Health in the Cardio section.</div>'}</div>
+    ${rangeToggle()}
+    <div class="bigchart">${pts.length?bigLine(pts,mi.color):`<div class="empty">${dts.length?'No data in this range — try a longer one.':'No data yet. Add a day below, or import from Apple Health in the Cardio section.'}</div>`}</div>
 
     <div class="block-title">Set ${mi.unit} for a day</div>
     <div class="field-row">
@@ -621,6 +644,7 @@ function renderMetricModal(){
       || '<div class="muted" style="font-size:13px">No days logged yet.</div>'
     }</div>`;
   m.querySelector('#w-close').onclick = closeWorkout;
+  m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderMetricModal(); });
   m.querySelector('#m-save').onclick = ()=>{
     const d = document.getElementById('m-date').value;
     const v = parseFloat(document.getElementById('m-val').value);
