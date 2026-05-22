@@ -640,7 +640,7 @@ async function searchFood(query){
   try{
     const url=`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(usdaKey())}`
       +`&query=${encodeURIComponent(q)}&pageSize=25`
-      +`&dataType=${encodeURIComponent('Foundation,SR Legacy,Survey (FNDDS),Branded')}`;
+      +`&dataType=${encodeURIComponent('Foundation,SR Legacy,Branded')}`;   // no parens: raw "(FNDDS)" trips nginx 400
     const r=await fetch(url);
     if(!r.ok) throw new Error('HTTP '+r.status+(r.status===429?' — demo key rate-limited; add your own free key in ⚙ Settings':''));
     const j=await r.json();
@@ -671,7 +671,7 @@ async function usdaPer100(name, cnCarb100){
   try{
     const url=`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(usdaKey())}`
       +`&query=${encodeURIComponent(name)}&pageSize=25`
-      +`&dataType=${encodeURIComponent('Foundation,SR Legacy,Survey (FNDDS),Branded')}`;
+      +`&dataType=${encodeURIComponent('Foundation,SR Legacy,Branded')}`;   // no parens: raw "(FNDDS)" trips nginx 400
     const r=await fetch(url); if(!r.ok) return null;
     const j=await r.json();
     let cands=(j.foods||[]).map(f=>({per100:macrosFromUSDA(f.foodNutrients), generic:f.dataType!=='Branded'}))
