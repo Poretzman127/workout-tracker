@@ -125,6 +125,13 @@
   .tcard.c .tv{color:var(--warn);} .tcard.f .tv{color:var(--hot);}
   .food-input{display:flex;gap:8px;margin-bottom:12px;}
   .food-input input{flex:1;}
+  .results{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:14px;background:var(--panel);}
+  .res-item{padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;}
+  .res-item:last-child{border-bottom:none;}
+  .res-item:hover{background:var(--panel2);}
+  .res-name{font-weight:600;font-size:13.5px;}
+  .res-mac{font-size:12px;color:var(--muted);margin-top:1px;}
+  .res-mac .per{opacity:.7;}
   .banner{background:rgba(245,197,66,.12);border:1px solid var(--warn);color:#f5d98a;
     border-radius:10px;padding:11px 13px;font-size:13px;margin-bottom:14px;}
   .banner b{color:#fff;}
@@ -190,7 +197,9 @@ const JSONBIN_BIN_ID = '6a0fbeda6877513b27b14732';
 const JSONBIN_KEY    = '$2a$10$Suhd6ugh.yjzb8tt/KynCuzQNrHQtw0xZSCQRjrpx9893YzyKheoa';
 const JSONBIN_URL    = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
 const LS_DATA = 'wt_data';
-const LS_NIX  = 'wt_nutritionix';   // {id,key}
+const LS_USDA = 'wt_usdakey';        // optional USDA FoodData Central key (string)
+const USDA_DEMO = 'DEMO_KEY';        // shared demo key — works out of the box, rate-limited
+const usdaKey = () => (localStorage.getItem(LS_USDA)||'').trim() || USDA_DEMO;
 
 const GROUPS = [
   {id:'back-bicep',   name:'Back & Bicep',  kind:'lift'},
@@ -528,16 +537,17 @@ function deleteWorkout(name){
 }
 
 /* ============================== RENDER: NUTRITION ============================== */
-function nixCreds(){ try{ return JSON.parse(localStorage.getItem(LS_NIX)); }catch(e){ return null; } }
+// macros for a logged row (rows store per-100g base + grams, so editing grams rescales)
+function foodMacros(r){
+  if(r.per100){ const k=(r.g||0)/100; return {cal:r.per100.cal*k, p:r.per100.p*k, c:r.per100.c*k, f:r.per100.f*k}; }
+  return {cal:r.cal||0, p:r.p||0, c:r.c||0, f:r.f||0};   // legacy flat rows
+}
 function renderNutrition(){
   const root = document.getElementById('view-nutrition');
   const day = nutDay;
   const rows = DATA.food[day] || [];
-  const tot = rows.reduce((a,r)=>({cal:a.cal+(r.cal||0),p:a.p+(r.p||0),c:a.c+(r.c||0),f:a.f+(r.f||0)}),{cal:0,p:0,c:0,f:0});
-  const creds = nixCreds();
+  const tot = rows.reduce((a,r)=>{const m=foodMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f};},{cal:0,p:0,c:0,f:0});
   root.innerHTML = `
-    ${creds?'':`<div class="banner"><b>Nutritionix not connected.</b> Open ⚙ Settings to paste your free App ID + Key,
-       then just type what you ate (e.g. “2 eggs and a banana”) and macros fill in automatically.</div>`}
     <div class="day-nav">
       <button class="arrow" id="d-prev">‹</button>
       <span class="date" id="d-label">${fmtDateLong(day)}${day===todayStr()?' · Today':''}</span>
@@ -550,31 +560,39 @@ function renderNutrition(){
       <div class="tcard f"><div class="tn">Fat</div><div class="tv">${Math.round(tot.f)}<small style="font-size:11px">g</small></div></div>
     </div>
     <div class="food-input">
-      <input id="food-q" placeholder="What did you eat? e.g. 2 eggs and a banana" ${creds?'':'disabled'}>
-      <button class="btn" id="food-add" ${creds?'':'disabled'}>+ Add</button>
+      <input id="food-q" placeholder="Search a food — e.g. chicken breast, banana, oatmeal">
+      <button class="btn" id="food-search">Search</button>
     </div>
+    <div id="food-results"></div>
     <div class="table-wrap">
-      <table><thead><tr><th>Food</th><th>Cal</th><th>P</th><th>C</th><th>F</th><th></th></tr></thead>
+      <table><thead><tr><th>Food</th><th>Grams</th><th>Cal</th><th>P</th><th>C</th><th>F</th><th></th></tr></thead>
       <tbody id="food-body">${
-        rows.length ? rows.map((r,i)=>`<tr>
+        rows.length ? rows.map((r,i)=>{const m=foodMacros(r);return `<tr>
           <td>${r.desc}</td>
-          <td>${Math.round(r.cal)}</td><td>${Math.round(r.p)}</td>
-          <td>${Math.round(r.c)}</td><td>${Math.round(r.f)}</td>
-          <td><button class="del" data-fdel="${i}">×</button></td></tr>`).join('')
-        : `<tr><td colspan="6" class="empty">Nothing logged for this day.</td></tr>`
+          <td>${r.per100?`<input class="num gin" data-g="${i}" type="number" inputmode="decimal" value="${r.g}" style="width:66px;padding:4px 6px">`:'<span class="muted">—</span>'}</td>
+          <td>${Math.round(m.cal)}</td><td>${Math.round(m.p)}</td>
+          <td>${Math.round(m.c)}</td><td>${Math.round(m.f)}</td>
+          <td><button class="del" data-fdel="${i}">×</button></td></tr>`;}).join('')
+        : `<tr><td colspan="7" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
       }</tbody></table>
+    </div>
+    <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">
+      Food data: USDA FoodData Central. Works on a shared demo key out of the box; for faster, unlimited
+      lookups add your own free key in ⚙ Settings (instant, no approval).
     </div>`;
   root.querySelector('#d-prev').onclick = ()=>{ nutDay = shiftDay(nutDay,-1); renderNutrition(); };
   root.querySelector('#d-next').onclick = ()=>{ nutDay = shiftDay(nutDay,1); renderNutrition(); };
-  const addBtn = root.querySelector('#food-add'), q = root.querySelector('#food-q');
-  if(addBtn){
-    addBtn.onclick = ()=>addFood(q.value);
-    q.onkeydown = e=>{ if(e.key==='Enter') addFood(q.value); };
-  }
+  const q = root.querySelector('#food-q'), sb = root.querySelector('#food-search');
+  sb.onclick = ()=>searchFood(q.value);
+  q.onkeydown = e=>{ if(e.key==='Enter') searchFood(q.value); };
   root.querySelectorAll('[data-fdel]').forEach(b=> b.onclick=()=>{
     DATA.food[day].splice(+b.dataset.fdel,1);
     if(!DATA.food[day].length) delete DATA.food[day];
     save(); renderNutrition();
+  });
+  root.querySelectorAll('.gin').forEach(inp=> inp.onchange=()=>{
+    const g=parseFloat(inp.value); if(isNaN(g)||g<0) return;
+    DATA.food[day][+inp.dataset.g].g = g; save(); renderNutrition();
   });
 }
 function shiftDay(s,delta){
@@ -583,33 +601,50 @@ function shiftDay(s,delta){
   const p=n=>String(n).padStart(2,'0');
   return `${dt.getFullYear()}-${p(dt.getMonth()+1)}-${p(dt.getDate())}`;
 }
-async function addFood(query){
-  const q = (query||'').trim(); if(!q) return;
-  const creds = nixCreds(); if(!creds) return;
-  const btn = document.getElementById('food-add');
-  btn.innerHTML = '<span class="spin"></span>'; btn.disabled=true;
+// pull kcal/protein/carb/fat (per 100g) out of a USDA food's nutrient list
+function macrosFromUSDA(fn){
+  let cal=0,p=0,c=0,fat=0;
+  for(const n of (fn||[])){
+    const num=String(n.nutrientNumber||''), name=(n.nutrientName||'').toLowerCase(),
+          unit=(n.unitName||'').toLowerCase(), v=n.value||0;
+    if(!cal && unit==='kcal' && (num==='208'||num==='957'||num==='958'||name.startsWith('energy'))) cal=v;
+    else if(num==='203'||name==='protein') p=v;
+    else if(num==='204'||name.startsWith('total lipid')) fat=v;
+    else if(num==='205'||name.startsWith('carbohydrate, by diff')) c=v;
+  }
+  return {cal,p,c,f:fat};
+}
+function titleCase(s){ return (s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()); }
+let _foodHits = [];
+async function searchFood(query){
+  const q=(query||'').trim(); if(!q) return;
+  const box=document.getElementById('food-results');
+  box.innerHTML='<div style="padding:10px;color:var(--muted)"><span class="spin"></span> Searching…</div>';
   try{
-    const r = await fetch('https://trackapi.nutritionix.com/v2/natural/nutrients',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-app-id':creds.id,'x-app-key':creds.key},
-      body: JSON.stringify({query:q})
+    const url=`https://api.nal.usda.gov/fdc/v1/foods/search?api_key=${encodeURIComponent(usdaKey())}`
+      +`&query=${encodeURIComponent(q)}&pageSize=25`
+      +`&dataType=${encodeURIComponent('Foundation,SR Legacy,Survey (FNDDS),Branded')}`;
+    const r=await fetch(url);
+    if(!r.ok) throw new Error('HTTP '+r.status+(r.status===429?' — demo key rate-limited; add your own free key in ⚙ Settings':''));
+    const j=await r.json();
+    _foodHits=(j.foods||[]).map(f=>({desc:titleCase(f.description), per100:macrosFromUSDA(f.foodNutrients), generic:f.dataType!=='Branded'}))
+      .filter(h=>h.per100.cal>0||h.per100.p>0||h.per100.c>0||h.per100.f>0)   // drop entries missing macro data
+      .sort((a,b)=>(b.generic?1:0)-(a.generic?1:0))                          // whole foods before branded (stable)
+      .slice(0,8);
+    if(!_foodHits.length){ box.innerHTML='<div style="padding:10px;color:var(--muted)">No matches. Try a simpler word.</div>'; return; }
+    box.innerHTML=`<div class="results">${_foodHits.map((h,i)=>`<div class="res-item" data-pick="${i}">
+        <div class="res-name">${h.desc}</div>
+        <div class="res-mac">${Math.round(h.per100.cal)} kcal · P${Math.round(h.per100.p)} C${Math.round(h.per100.c)} F${Math.round(h.per100.f)} <span class="per">per 100g · tap to add</span></div>
+      </div>`).join('')}</div>`;
+    box.querySelectorAll('[data-pick]').forEach(it=> it.onclick=()=>{
+      const h=_foodHits[+it.dataset.pick]; if(!h) return;
+      if(!DATA.food[nutDay]) DATA.food[nutDay]=[];
+      DATA.food[nutDay].push({desc:h.desc, g:100, per100:h.per100});
+      save(); renderNutrition();
     });
-    if(!r.ok){ throw new Error('HTTP '+r.status); }
-    const j = await r.json();
-    if(!DATA.food[nutDay]) DATA.food[nutDay]=[];
-    (j.foods||[]).forEach(f=>{
-      DATA.food[nutDay].push({
-        desc:`${+(f.serving_qty||1)} ${f.serving_unit||''} ${f.food_name}`.replace(/\s+/g,' ').trim(),
-        cal:f.nf_calories||0, p:f.nf_protein||0,
-        c:f.nf_total_carbohydrate||0, f:f.nf_total_fat||0
-      });
-    });
-    save(); renderNutrition();
   }catch(e){
-    alert('Could not look that up.\n\n'+e.message+
-      '\n\nIf this says "401", your Nutritionix ID/Key is wrong (⚙ Settings).'+
-      '\nIf it mentions CORS/Failed to fetch, tell me and I\'ll add a proxy.');
-    btn.innerHTML='+ Add'; btn.disabled=false;
+    box.innerHTML=`<div style="padding:10px;color:var(--hot)">Couldn't search: ${e.message}`+
+      `<br><span style="color:var(--muted)">If it says "Failed to fetch", tell me — I'll add a proxy.</span></div>`;
   }
 }
 
@@ -697,24 +732,24 @@ async function importHealth(file){
 
 /* ============================== SETTINGS ============================== */
 function openSettings(){
-  const creds = nixCreds()||{id:'',key:''};
+  const key = localStorage.getItem(LS_USDA)||'';
   const m = document.getElementById('s-modal');
   m.innerHTML = `
     <div class="modal-head"><h3>Settings</h3><button class="x" id="s-close">×</button></div>
-    <div class="block-title">Nutritionix API (food macros)</div>
-    <div class="modal-sub">Free account at <a href="https://developer.nutritionix.com/signup" target="_blank" rel="noopener">developer.nutritionix.com/signup</a>.
-      After signing up, your <b>App ID</b> and <b>App Key</b> are on the dashboard. Paste them here (saved on this device).</div>
-    <div class="field" style="margin-bottom:8px"><label>App ID</label><input id="nix-id" value="${creds.id||''}" placeholder="xxxxxxxx"></div>
-    <div class="field" style="margin-bottom:14px"><label>App Key</label><input id="nix-key" value="${creds.key||''}" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"></div>
-    <button class="btn" id="nix-save">Save</button>
+    <div class="block-title">USDA Food key (optional)</div>
+    <div class="modal-sub">Food search already works on a shared demo key. If it gets slow or rate-limited,
+      grab your own free key (instant, no approval) at
+      <a href="https://fdc.nal.usda.gov/api-key-signup.html" target="_blank" rel="noopener">fdc.nal.usda.gov/api-key-signup.html</a>
+      and paste it here (saved on this device).</div>
+    <div class="field" style="margin-bottom:14px"><label>USDA API key</label><input id="usda-key" value="${key}" placeholder="leave blank to use the shared demo key"></div>
+    <button class="btn" id="usda-save">Save</button>
     <div class="block-title" style="margin-top:22px">Data</div>
     <div class="modal-sub">Synced to your private cloud bin and cached on this device. Same data on phone &amp; computer.</div>
     <button class="btn ghost sm" id="export-json">Download backup (.json)</button>
   `;
   m.querySelector('#s-close').onclick = ()=>document.getElementById('s-overlay').classList.remove('show');
-  m.querySelector('#nix-save').onclick = ()=>{
-    const id=document.getElementById('nix-id').value.trim(), key=document.getElementById('nix-key').value.trim();
-    localStorage.setItem(LS_NIX, JSON.stringify({id,key}));
+  m.querySelector('#usda-save').onclick = ()=>{
+    localStorage.setItem(LS_USDA, document.getElementById('usda-key').value.trim());
     document.getElementById('s-overlay').classList.remove('show');
     renderNutrition();
   };
