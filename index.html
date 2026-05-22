@@ -159,6 +159,18 @@
     .stat-strip{grid-template-columns:1fr;}
     th,td{padding:9px 9px;font-size:12.5px;}
     .sets-cell{max-width:160px;}
+    /* Workouts: stack each row as a card so every data point shows without sideways scroll */
+    #view-workouts .table-wrap{overflow:visible;}
+    #view-workouts thead{display:none;}
+    #view-workouts table,#view-workouts tbody,#view-workouts tr,#view-workouts td{display:block;width:auto;}
+    #view-workouts tbody tr{position:relative;padding:10px 12px 12px;border-bottom:1px solid var(--line);}
+    #view-workouts tbody tr:last-child{border-bottom:none;}
+    #view-workouts td{border:none;text-align:left;white-space:normal;padding:2px 0;font-size:13px;}
+    #view-workouts td.c-name{font-size:15px;margin-bottom:5px;padding-right:34px;}
+    #view-workouts td[data-label]::before{content:attr(data-label) ": ";
+      color:var(--muted);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;}
+    #view-workouts td.sets-cell{max-width:none;}
+    #view-workouts td.c-del{position:absolute;top:7px;right:2px;padding:0;}
     .modal{padding:16px;}
   }
 </style>
@@ -246,6 +258,8 @@ function fmtDateLong(s){
   const [y,m,d] = s.split('-').map(Number);
   return new Date(y,m-1,d).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
 }
+function fmtTime(ms){ return new Date(ms).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
+function lastSetTime(sets){ const ts=(sets||[]).map(s=>s.t).filter(Boolean); return ts.length?Math.max(...ts):null; }
 function sessionOutput(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0)*(s.r||0), 0); }
 function sessionReps(sets){ return (sets||[]).reduce((a,s)=>a + (s.r||0), 0); }
 function sortedDates(obj){ return Object.keys(obj||{}).sort(); }      // asc
@@ -392,7 +406,7 @@ function renderWorkouts(){
     } else {
       const t = el(`<table><thead><tr>
         <th>${cardio?'Cardio':'Workout'}</th>
-        <th>${cardio?'Last Work':'Last Output'}</th>
+        <th>${cardio?'Last Work':'Last Output (lbs)'}</th>
         <th>Last Date</th>
         <th>Last Session Sets</th>
         <th></th></tr></thead><tbody></tbody></table>`);
@@ -406,13 +420,14 @@ function renderWorkouts(){
         const setsHtml = last
           ? sets.map(s=>`<span class="set">${setLabel(g.id,s)}</span>`).join('')
           : '<span class="muted">—</span>';
+        const lt = last ? lastSetTime(sets) : null;
         const tr = el(`<tr>
-          <td><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
+          <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
               <span class="info-ic" data-demo="${encodeURIComponent(name)}" title="How to do it">ℹ</span></td>
-          <td>${out==null?'<span class="muted">—</span>':`<span class="out-val">${out.toLocaleString()}</span>`}</td>
-          <td>${last?fmtDate(last):'<span class="muted">—</span>'}</td>
-          <td class="sets-cell">${setsHtml}</td>
-          <td><button class="del" data-del="${encodeURIComponent(name)}" title="Delete">×</button></td>
+          <td data-label="${cardio?'Work':'Output (lbs)'}">${out==null?'<span class="muted">—</span>':`<span class="out-val">${out.toLocaleString()}</span>`}</td>
+          <td data-label="Last">${last?fmtDate(last)+(lt?` · ${fmtTime(lt)}`:''):'<span class="muted">—</span>'}</td>
+          <td class="sets-cell" data-label="Sets">${setsHtml}</td>
+          <td class="c-del"><button class="del" data-del="${encodeURIComponent(name)}" title="Delete">×</button></td>
         </tr>`);
         tb.appendChild(tr);
       }
@@ -498,7 +513,7 @@ function renderModal(){
     const rv = parseInt(document.getElementById('in-r').value,10);
     if(isNaN(wv)||isNaN(rv)||rv<=0){ document.getElementById('in-w').focus(); return; }
     if(!w.sessions[today]) w.sessions[today]=[];
-    w.sessions[today].push({w:wv, r:rv});
+    w.sessions[today].push({w:wv, r:rv, t:Date.now()});
     save(); renderModal(); renderWorkouts();
   };
   m.querySelectorAll('[data-rm]').forEach(b=> b.onclick=()=>{
