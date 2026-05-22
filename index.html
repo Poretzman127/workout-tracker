@@ -197,11 +197,15 @@ const JSONBIN_BIN_ID = '6a0fbeda6877513b27b14732';
 const JSONBIN_KEY    = '$2a$10$Suhd6ugh.yjzb8tt/KynCuzQNrHQtw0xZSCQRjrpx9893YzyKheoa';
 const JSONBIN_URL    = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
 const LS_DATA = 'wt_data';
-const LS_USDA = 'wt_usdakey';        // optional USDA FoodData Central key (string)
-const USDA_DEMO = 'DEMO_KEY';        // shared demo key — works out of the box, rate-limited
-const usdaKey = () => (localStorage.getItem(LS_USDA)||'').trim() || USDA_DEMO;
-const LS_CN   = 'wt_cnkey';          // CalorieNinjas key — enables plain-language entry
-const cnKey   = () => (localStorage.getItem(LS_CN)||'').trim();
+const LS_USDA = 'wt_usdakey';        // optional per-device USDA key override
+const USDA_DEMO = 'DEMO_KEY';        // last-resort shared demo key (rate-limited)
+// Built-in keys so the app works on EVERY device with zero setup. These are free and
+// instantly regenerable — if ever abused, make new ones and update these two lines.
+const USDA_DEFAULT = 'r9tS5Ljq8hHc58F59Ent66sw6E3gfyiTAvkF6ybN';
+const CN_DEFAULT   = 'lbc1HTZX5PZfBRFmCQVjjm9VaPbQoZmrTwx95gWu';
+const usdaKey = () => (localStorage.getItem(LS_USDA)||'').trim() || USDA_DEFAULT || USDA_DEMO;
+const LS_CN   = 'wt_cnkey';          // optional per-device CalorieNinjas key override
+const cnKey   = () => (localStorage.getItem(LS_CN)||'').trim() || CN_DEFAULT;
 
 const GROUPS = [
   {id:'back-bicep',   name:'Back & Bicep',  kind:'lift'},
@@ -807,22 +811,16 @@ async function importHealth(file){
 /* ============================== SETTINGS ============================== */
 function openSettings(){
   const key = localStorage.getItem(LS_USDA)||'';
+  const ck  = localStorage.getItem(LS_CN)||'';
   const m = document.getElementById('s-modal');
   m.innerHTML = `
     <div class="modal-head"><h3>Settings</h3><button class="x" id="s-close">×</button></div>
-    <div class="block-title">CalorieNinjas key — plain-language food entry</div>
-    <div class="modal-sub">Lets you type meals in plain words (“2 eggs and a banana”). CalorieNinjas reads the foods
-      and portions; USDA (below) supplies the calories &amp; protein. Free key, instant, no approval: make an account at
-      <a href="https://api-ninjas.com/register" target="_blank" rel="noopener">api-ninjas.com/register</a>,
-      then copy your key from <a href="https://api-ninjas.com/profile" target="_blank" rel="noopener">api-ninjas.com/profile</a>.</div>
-    <div class="field" style="margin-bottom:14px"><label>CalorieNinjas API key</label><input id="cn-key" value="${cnKey()}" placeholder="paste to enable plain-language entry"></div>
-
-    <div class="block-title" style="margin-top:20px">USDA key — recommended</div>
-    <div class="modal-sub">Supplies accurate calories &amp; protein for plain-language meals (and powers exact search).
-      It works on a shared demo key, but that rate-limits quickly on multi-food meals — your own key is free and instant at
-      <a href="https://fdc.nal.usda.gov/api-key-signup.html" target="_blank" rel="noopener">fdc.nal.usda.gov/api-key-signup.html</a>.</div>
-    <div class="field" style="margin-bottom:14px"><label>USDA API key</label><input id="usda-key" value="${key}" placeholder="leave blank to use the shared demo key"></div>
-
+    <div class="block-title">Food lookup keys</div>
+    <div class="modal-sub">Plain-language food entry is <b>already set up</b> — the keys are built into the app, so it
+      works on every device with no setup needed. The boxes below are only if you ever want to use your <i>own</i>
+      keys instead; leave them blank to keep the built-in ones.</div>
+    <div class="field" style="margin-bottom:10px"><label>CalorieNinjas API key (optional override)</label><input id="cn-key" value="${ck}" placeholder="built-in key in use — paste to override"></div>
+    <div class="field" style="margin-bottom:14px"><label>USDA API key (optional override)</label><input id="usda-key" value="${key}" placeholder="built-in key in use — paste to override"></div>
     <button class="btn" id="usda-save">Save</button>
     <div class="block-title" style="margin-top:22px">Data</div>
     <div class="modal-sub">Synced to your private cloud bin and cached on this device. Same data on phone &amp; computer.</div>
