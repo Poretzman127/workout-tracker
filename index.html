@@ -240,6 +240,13 @@ const SEED = {
 };
 const demoUrl = name => `https://www.youtube.com/results?search_query=${encodeURIComponent(name+' proper form')}`;
 
+// Daily-total cardio metrics (one number per day, not weight×reps sets). Auto-created in the
+// Cardio group and fed by the Apple Health import or manual entry. dec = decimal places shown.
+const METRICS = {
+  steps:    {name:'Steps',            unit:'steps', dec:0, color:'#34d399', hk:'StepCount'},
+  distance: {name:'Walking Distance', unit:'mi',    dec:2, color:'#22d3ee', hk:'DistanceWalkingRunning'},
+};
+
 /* ============================== STATE ============================== */
 let DATA = { workouts:{}, food:{}, body:{}, _updated:0 };
 let nutDay = todayStr();          // active nutrition date
@@ -264,6 +271,9 @@ function sessionOutput(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0)*(s.r|
 function sessionReps(sets){ return (sets||[]).reduce((a,s)=>a + (s.r||0), 0); }
 function sortedDates(obj){ return Object.keys(obj||{}).sort(); }      // asc
 function groupKind(gid){ return (GROUPS.find(g=>g.id===gid)||{}).kind; }
+function isMetric(w){ return !!(w && w.metric); }
+function metricInfo(w){ return METRICS[w.metric]; }
+function fmtMetricVal(w, v){ return v==null?'—':(+v).toLocaleString(undefined,{maximumFractionDigits:metricInfo(w).dec}); }
 function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }
 
 /* ============================== SYNC ============================== */
@@ -300,6 +310,7 @@ async function initSync(){
     pushRemote();   // local is newer — push it up
   }
   ensureSeed();
+  ensureMetrics();
   renderAll(); stampUpdated();
   setSync('ok','Synced');
 }
@@ -328,6 +339,16 @@ function ensureSeed(){
     }
   }
   saveLocal();
+}
+// Make sure the daily-total cardio metrics (Steps, Walking Distance) always exist.
+function ensureMetrics(){
+  let created = false;
+  for(const id in METRICS){
+    const nm = METRICS[id].name;
+    if(!DATA.workouts[nm]){ DATA.workouts[nm] = { group:'cardio', metric:id, sessions:{} }; created = true; }
+    else if(!DATA.workouts[nm].metric){ DATA.workouts[nm].metric = id; created = true; }   // backfill an old entry
+  }
+  if(created) saveLocal();
 }
 
 /* ============================== CHART ============================== */
@@ -382,7 +403,12 @@ function bigLine(points, color){
 /* ============================== RENDER: WORKOUTS ============================== */
 function workoutsByGroup(gid){
   return Object.keys(DATA.workouts)
-    .filter(n=>DATA.workouts[n].group===gid).sort();
+    .filter(n=>DATA.workouts[n].group===gid)
+    .sort((a,b)=>{                                  // pin daily-total metrics to the top
+      const am=isMetric(DATA.workouts[a]), bm=isMetric(DATA.workouts[b]);
+      if(am!==bm) return am?-1:1;
+      return a.localeCompare(b);
+    });
 }
 function setLabel(gid, s){
   return groupKind(gid)==='cardio'
@@ -413,6 +439,7 @@ function renderWorkouts(){
       const tb = t.querySelector('tbody');
       for(const name of names){
         const w = DATA.workouts[name];
+        if(isMetric(w)){ tb.appendChild(metricRow(name, w)); continue; }
         const dts = sortedDates(w.sessions);
         const last = dts[dts.length-1];
         const sets = last ? w.sessions[last] : [];
@@ -434,8 +461,36 @@ function renderWorkouts(){
       wrap.appendChild(t);
     }
     sec.appendChild(wrap);
+    if(cardio){
+      sec.appendChild(el(`<div class="uploader" style="margin-top:14px">
+        <div style="font-size:14px;font-weight:700">⬆ Import steps &amp; distance from Apple Health</div>
+        <p>Health app → profile → <b>Export All Health Data</b> → unzip → upload <b>export.xml</b>.
+           Sums your daily steps &amp; walking distance (and weight). Big files stream fine.</p>
+        <div class="field" style="max-width:220px;margin:0 auto 10px"><label>Only import on/after</label><input type="date" id="c-from" value="2026-05-20"></div>
+        <input type="file" id="c-file" accept=".xml">
+        <div id="c-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+      </div>`));
+    }
     root.appendChild(sec);
   }
+}
+// table row for a daily-total metric (Steps / Walking Distance)
+function metricRow(name, w){
+  const mi = metricInfo(w);
+  const dts = sortedDates(w.sessions);
+  const last = dts[dts.length-1];
+  const val = last ? w.sessions[last] : null;
+  const recent = dts.slice(-5).reverse()
+    .map(d=>`<span class="set">${fmtDate(d)}: ${fmtMetricVal(w, w.sessions[d])}</span>`).join('')
+    || '<span class="muted">—</span>';
+  return el(`<tr>
+    <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
+        <span class="info-ic" data-open="${encodeURIComponent(name)}" title="View history">📈</span></td>
+    <td data-label="Latest">${val==null?'<span class="muted">—</span>':`<span class="out-val">${fmtMetricVal(w,val)}</span> <span class="muted">${mi.unit}</span>`}</td>
+    <td data-label="Last">${last?fmtDate(last):'<span class="muted">—</span>'}</td>
+    <td class="sets-cell" data-label="Recent days">${recent}</td>
+    <td class="c-del"></td>
+  </tr>`);
 }
 
 /* ----- workout modal ----- */
@@ -447,6 +502,7 @@ function openWorkout(name){
 }
 function closeWorkout(){ document.getElementById('w-overlay').classList.remove('show'); modalName=null; }
 function renderModal(){
+  if(isMetric(DATA.workouts[modalName])) return renderMetricModal();
   const name = modalName, w = DATA.workouts[name];
   const gid = w.group, cardio = groupKind(gid)==='cardio';
   const dts = sortedDates(w.sessions);
@@ -525,6 +581,56 @@ function renderModal(){
   m.querySelectorAll('[data-prior]').forEach(c=> c.onclick=()=>{
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
     renderModal();
+  });
+}
+// modal for a daily-total metric: line chart + per-day add/edit + recent list
+function renderMetricModal(){
+  const name = modalName, w = DATA.workouts[name], mi = metricInfo(w);
+  const dts = sortedDates(w.sessions);
+  const today = todayStr();
+  const pts = dts.map(d=>({label:fmtDate(d), value:+w.sessions[d]}));
+  const latest = dts.length ? +w.sessions[dts[dts.length-1]] : null;
+  const last7 = dts.slice(-7);
+  const avg7 = last7.length ? last7.reduce((a,d)=>a+(+w.sessions[d]),0)/last7.length : null;
+  const todayVal = w.sessions[today];
+
+  const m = document.getElementById('w-modal');
+  m.innerHTML = `
+    <div class="modal-head"><h3>${name}</h3><button class="x" id="w-close">×</button></div>
+    <div class="modal-sub">Cardio · daily ${mi.unit} · ${dts.length} day${dts.length===1?'':'s'} logged</div>
+    <div class="stat-strip">
+      <div class="tcard"><div class="tn">Latest</div><div class="tv">${fmtMetricVal(w,latest)}<small style="font-size:11px"> ${mi.unit}</small></div></div>
+      <div class="tcard"><div class="tn">7-day avg</div><div class="tv">${fmtMetricVal(w,avg7)}</div></div>
+      <div class="tcard"><div class="tn">Days</div><div class="tv">${dts.length}</div></div>
+    </div>
+    <div class="bigchart">${pts.length?bigLine(pts,mi.color):'<div class="empty">No data yet. Add a day below, or import from Apple Health in the Cardio section.</div>'}</div>
+
+    <div class="block-title">Set ${mi.unit} for a day</div>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input id="m-date" type="date" value="${today}"></div>
+      <div class="field"><label>${mi.name} (${mi.unit})</label><input class="num" id="m-val" type="number" inputmode="decimal" step="any" value="${todayVal!=null?todayVal:''}" placeholder="${mi.dec?'3.20':'8000'}"></div>
+      <button class="btn" id="m-save">Save</button>
+    </div>
+
+    <div class="block-title">Recent days</div>
+    <div class="today-sets" id="m-list">${
+      dts.slice(-14).reverse().map(d=>`<div class="set-line">
+          <span>${fmtDateLong(d)}</span>
+          <span class="so">${fmtMetricVal(w,w.sessions[d])} ${mi.unit}</span>
+          <button class="del" data-mrm="${d}">×</button></div>`).join('')
+      || '<div class="muted" style="font-size:13px">No days logged yet.</div>'
+    }</div>`;
+  m.querySelector('#w-close').onclick = closeWorkout;
+  m.querySelector('#m-save').onclick = ()=>{
+    const d = document.getElementById('m-date').value;
+    const v = parseFloat(document.getElementById('m-val').value);
+    if(!d || isNaN(v) || v<0){ document.getElementById('m-val').focus(); return; }
+    w.sessions[d] = mi.dec ? Math.round(v*100)/100 : Math.round(v);
+    save(); renderMetricModal(); renderWorkouts();
+  };
+  m.querySelectorAll('[data-mrm]').forEach(b=> b.onclick=()=>{
+    delete w.sessions[b.dataset.mrm];
+    save(); renderMetricModal(); renderWorkouts();
   });
 }
 function priorDetailHtml(name){
@@ -814,9 +920,9 @@ function renderBody(){
     </div>
 
     <div class="uploader">
-      <div style="font-size:15px;font-weight:700">⬆ Import Apple Health weight history</div>
+      <div style="font-size:15px;font-weight:700">⬆ Import Apple Health data</div>
       <p>Health app → your profile → <b>Export All Health Data</b> → unzip → upload the <b>export.xml</b> here.<br>
-         I'll pull Body Mass readings on/after the date below (one per day kept). Big files are fine — it streams.</p>
+         I'll pull weight (one per day) plus daily steps &amp; walking distance on/after the date below. Big files are fine — it streams.</p>
       <div class="field" style="max-width:220px;margin-bottom:10px"><label>Only import readings on/after</label><input type="date" id="b-from" value="2026-05-20"></div>
       <input type="file" id="b-file" accept=".xml">
       <div id="b-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
@@ -827,17 +933,23 @@ function renderBody(){
     if(!d||isNaN(v)) return;
     DATA.body[d]=v; save(); renderBody();
   };
-  root.querySelector('#b-file').onchange = e=>{ if(e.target.files[0]) importHealth(e.target.files[0]); };
+  root.querySelector('#b-file').onchange = e=>{ if(e.target.files[0]) importHealth(e.target.files[0], document.getElementById('b-status'), document.getElementById('b-from').value); };
 }
-// stream-parse export.xml for BodyMass records (memory-safe for huge files)
-async function importHealth(file){
-  const status = document.getElementById('b-status');
-  const fromDate = (document.getElementById('b-from')||{}).value || '';  // YYYY-MM-DD; '' = no cutoff
+// stream-parse export.xml for weight + daily steps + walking distance (memory-safe for huge files).
+// Weight = one reading/day (last wins); steps & distance = SUM of the day's readings.
+// Buckets by startDate (the day the activity happened), falling back to creationDate.
+async function importHealth(file, statusEl, fromDate){
+  const status = statusEl || document.getElementById('b-status');
+  fromDate = fromDate || '';                                   // YYYY-MM-DD; '' = no cutoff
   status.innerHTML = '<span class="spin"></span> Reading…';
-  const re = /<Record[^>]*type="HKQuantityTypeIdentifierBodyMass"[^>]*\/>/g;
-  const valRe = /value="([\d.]+)"/, dateRe = /(?:startDate|endDate|creationDate)="(\d{4}-\d{2}-\d{2})/, unitRe=/unit="([^"]+)"/;
-  let found = {};
-  let count = 0;
+  ensureMetrics();
+  const recRe  = /<Record ([^>]*)>/g;                          // device attrs are &lt;&gt;-escaped, so no literal > inside
+  const typeRe = /type="HKQuantityTypeIdentifier(\w+)"/;
+  const valRe  = /value="([\d.]+)"/;
+  const unitRe = /unit="([^"]+)"/;
+  const sDateRe = /startDate="(\d{4}-\d{2}-\d{2})/, cDateRe = /creationDate="(\d{4}-\d{2}-\d{2})/;
+  const weight = {}, steps = {}, dist = {};
+  let scanned = 0;
   try{
     const reader = file.stream().getReader();
     const dec = new TextDecoder();
@@ -846,36 +958,47 @@ async function importHealth(file){
       const {done,value} = await reader.read();
       if(done) break;
       buf += dec.decode(value,{stream:true});
-      let m;
-      let lastIdx = 0;
-      re.lastIndex = 0;
-      while((m = re.exec(buf))){
-        const rec = m[0];
-        const dm = rec.match(dateRe), vm = rec.match(valRe), um = rec.match(unitRe);
-        if(dm && vm){
-          count++;
-          if(fromDate && dm[1] < fromDate) { lastIdx = re.lastIndex; continue; }  // skip readings before cutoff
-          let v = parseFloat(vm[1]);
-          if(um && /kg/i.test(um[1])) v = v*2.20462;   // normalize to lb
-          found[dm[1]] = v;   // last reading on that day wins
+      let m, lastIdx = 0;
+      recRe.lastIndex = 0;
+      while((m = recRe.exec(buf))){
+        lastIdx = recRe.lastIndex;
+        const a = m[1];
+        // cheap guard: skip the millions of heart-rate/energy/etc. records before running regexes
+        if(a.indexOf('BodyMass')<0 && a.indexOf('StepCount')<0 && a.indexOf('DistanceWalkingRunning')<0) continue;
+        const tm = a.match(typeRe); if(!tm) continue;
+        const type = tm[1];
+        if(type!=='BodyMass' && type!=='StepCount' && type!=='DistanceWalkingRunning') continue;
+        const vm = a.match(valRe); if(!vm) continue;
+        const dm = a.match(sDateRe) || a.match(cDateRe); if(!dm) continue;
+        const date = dm[1];
+        if(fromDate && date < fromDate) continue;               // skip before cutoff
+        scanned++;
+        let v = parseFloat(vm[1]); const um = a.match(unitRe);
+        if(type==='BodyMass'){
+          if(um && /kg/i.test(um[1])) v *= 2.20462;             // → lb
+          weight[date] = v;                                     // last reading that day wins
+        } else if(type==='StepCount'){
+          steps[date] = (steps[date]||0) + v;
+        } else {                                                // DistanceWalkingRunning
+          if(um && /km/i.test(um[1])) v *= 0.621371;            // → mi
+          dist[date] = (dist[date]||0) + v;
         }
-        lastIdx = re.lastIndex;
       }
-      // keep only the unprocessed tail to bound memory
-      buf = buf.slice(Math.max(0, lastIdx - 200));
-      status.innerHTML = `<span class="spin"></span> Scanned ${count.toLocaleString()} readings…`;
+      buf = buf.slice(lastIdx);                                 // drop processed records — no re-scan, no double count
+      status.innerHTML = `<span class="spin"></span> Scanned ${scanned.toLocaleString()} matching records…`;
     }
-    const days = Object.keys(found).length;
-    if(!days){
-      status.textContent = count
-        ? `Scanned ${count.toLocaleString()} readings but none were on/after ${fromDate}. Pick an earlier date and re-upload.`
-        : 'No Body Mass records found in that file.';
+    if(Object.keys(weight).length) Object.assign(DATA.body, weight);
+    const stepW = DATA.workouts[METRICS.steps.name], distW = DATA.workouts[METRICS.distance.name];
+    for(const d in steps) stepW.sessions[d] = Math.round(steps[d]);
+    for(const d in dist)  distW.sessions[d] = Math.round(dist[d]*100)/100;
+    const wd = Object.keys(weight).length, sd = Object.keys(steps).length, dd = Object.keys(dist).length;
+    if(!wd && !sd && !dd){
+      status.textContent = `No matching records on/after ${fromDate||'(any date)'}. Pick an earlier date and re-upload.`;
       return;
     }
-    Object.assign(DATA.body, found);
-    save(); renderBody();
+    save(); renderAll();
     const since = fromDate ? ` (on/after ${fromDate})` : '';
-    document.getElementById('b-status').textContent = `✓ Imported ${days} day(s) of weight${since}, from ${count.toLocaleString()} readings scanned.`;
+    status.textContent = `✓ Imported${since}: ${wd} day(s) weight · ${sd} day(s) steps · ${dd} day(s) distance.`;
   }catch(e){
     status.textContent = 'Could not read file: '+e.message;
   }
@@ -944,6 +1067,12 @@ document.getElementById('view-workouts').addEventListener('click', e=>{
   const demo=e.target.closest('[data-demo]'); if(demo){ openDemo(decodeURIComponent(demo.dataset.demo)); return; }
   const del=e.target.closest('[data-del]'); if(del){ deleteWorkout(decodeURIComponent(del.dataset.del)); return; }
   const add=e.target.closest('[data-add]'); if(add){ addWorkout(add.dataset.add); return; }
+});
+// Apple Health upload in the Cardio section
+document.getElementById('view-workouts').addEventListener('change', e=>{
+  if(e.target.id==='c-file' && e.target.files[0]){
+    importHealth(e.target.files[0], document.getElementById('c-status'), document.getElementById('c-from').value);
+  }
 });
 document.getElementById('w-overlay').addEventListener('click', e=>{ if(e.target.id==='w-overlay') closeWorkout(); });
 document.getElementById('s-overlay').addEventListener('click', e=>{ if(e.target.id==='s-overlay') document.getElementById('s-overlay').classList.remove('show'); });
