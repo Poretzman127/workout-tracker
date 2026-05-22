@@ -43,7 +43,8 @@
   .view{display:none;} .view.active{display:block;}
 
   .section{margin-bottom:26px;}
-  .section-head{display:flex;align-items:center;gap:10px;margin:0 0 8px;}
+  .section-head{display:flex;align-items:center;gap:10px;margin:0 0 8px;cursor:pointer;user-select:none;}
+  .section-head .caret{color:var(--muted);font-size:11px;width:10px;text-align:center;}
   .section-head h2{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px;}
   .section-head .pill{font-size:11px;color:var(--muted);background:var(--panel2);
     border:1px solid var(--line);padding:2px 8px;border-radius:999px;}
@@ -255,6 +256,8 @@ const METRICS = {
 let DATA = { workouts:{}, food:{}, body:{}, _updated:0 };
 let nutDay = todayStr();          // active nutrition date
 let pushTimer = null;
+let collapsed = {};               // per-group collapse state (workouts tab)
+try{ collapsed = JSON.parse(localStorage.getItem('wt_collapsed'))||{}; }catch(e){}
 
 /* ============================== HELPERS ============================== */
 function todayStr(){
@@ -426,10 +429,12 @@ function renderWorkouts(){
     const names = workoutsByGroup(g.id);
     const cardio = g.kind==='cardio';
     const sec = el(`<div class="section"></div>`);
-    sec.appendChild(el(`<div class="section-head">
+    sec.appendChild(el(`<div class="section-head" data-toggle="${g.id}">
+      <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
       <button class="btn ghost sm add-row" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>
     </div>`));
+    const body = el(`<div class="section-body"${collapsed[g.id]?' style="display:none"':''}></div>`);
     const wrap = el(`<div class="table-wrap"></div>`);
     if(!names.length){
       wrap.appendChild(el(`<div class="empty">No ${cardio?'cardio':'workouts'} yet — add one.</div>`));
@@ -464,9 +469,9 @@ function renderWorkouts(){
       }
       wrap.appendChild(t);
     }
-    sec.appendChild(wrap);
+    body.appendChild(wrap);
     if(cardio){
-      sec.appendChild(el(`<div class="uploader" style="margin-top:14px">
+      body.appendChild(el(`<div class="uploader" style="margin-top:14px">
         <div style="font-size:14px;font-weight:700">⬆ Import steps &amp; distance from Apple Health</div>
         <p>Health app → profile → <b>Export All Health Data</b> → unzip → upload <b>export.xml</b>.
            Sums your daily steps &amp; walking distance (and weight). Big files stream fine.</p>
@@ -475,8 +480,14 @@ function renderWorkouts(){
         <div id="c-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
       </div>`));
     }
+    sec.appendChild(body);
     root.appendChild(sec);
   }
+}
+function toggleGroup(gid){
+  collapsed[gid] = !collapsed[gid];
+  try{ localStorage.setItem('wt_collapsed', JSON.stringify(collapsed)); }catch(e){}
+  renderWorkouts();
 }
 // table row for a daily-total metric (Steps / Walking Distance)
 function metricRow(name, w){
@@ -1091,6 +1102,7 @@ document.getElementById('view-workouts').addEventListener('click', e=>{
   const demo=e.target.closest('[data-demo]'); if(demo){ openDemo(decodeURIComponent(demo.dataset.demo)); return; }
   const del=e.target.closest('[data-del]'); if(del){ deleteWorkout(decodeURIComponent(del.dataset.del)); return; }
   const add=e.target.closest('[data-add]'); if(add){ addWorkout(add.dataset.add); return; }
+  const tog=e.target.closest('[data-toggle]'); if(tog){ toggleGroup(tog.dataset.toggle); return; }
 });
 // Apple Health upload in the Cardio section
 document.getElementById('view-workouts').addEventListener('change', e=>{
