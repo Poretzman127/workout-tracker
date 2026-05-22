@@ -276,7 +276,7 @@ function fmtTime(ms){ return new Date(ms).toLocaleTimeString('en-US',{hour:'nume
 function lastSetTime(sets){ const ts=(sets||[]).map(s=>s.t).filter(Boolean); return ts.length?Math.max(...ts):null; }
 // most-recent-activity epoch ms for an exercise (set timestamp if present, else last session date) — used to sort recently-worked exercises to the top
 function lastActivity(w){
-  const dts=sortedDates((w||{}).sessions); if(!dts.length) return 0;
+  const dts=sortedDates((w||{}).sessions); if(!dts.length) return (w||{}).created||0;
   const last=dts[dts.length-1], sets=w.sessions[last];
   if(Array.isArray(sets)){ const lt=lastSetTime(sets); if(lt) return lt; }
   return new Date(last+'T00:00:00').getTime();
@@ -707,7 +707,7 @@ function addWorkout(gid){
   if(!clean) return;
   if(DATA.workouts[clean]){ alert('That name already exists.'); return; }
   const demo = prompt('Form demo URL (leave blank to auto-use a YouTube search, or paste a .gif link):', '') || demoUrl(clean);
-  DATA.workouts[clean] = { group:gid, demo, sessions:{} };
+  DATA.workouts[clean] = { group:gid, demo, sessions:{}, created:Date.now() };
   save(); renderWorkouts();
 }
 function deleteWorkout(name){
