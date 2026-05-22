@@ -211,7 +211,7 @@ const LS_CN   = 'wt_cnkey';          // optional per-device CalorieNinjas key ov
 const cnKey   = () => (localStorage.getItem(LS_CN)||'').trim() || CN_DEFAULT;
 // Daily macro targets — defaults are the FDA Daily Values for a 2,000-calorie diet
 // (https://www.fda.gov/food/nutrition-facts-label). Stored in DATA so they sync across devices.
-const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78};
+const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78, fib:28};
 const goals = () => ({...DEFAULT_GOALS, ...(DATA.goals||{})});
 
 const GROUPS = [
@@ -801,7 +801,8 @@ function renderBody(){
     <div class="uploader">
       <div style="font-size:15px;font-weight:700">⬆ Import Apple Health weight history</div>
       <p>Health app → your profile → <b>Export All Health Data</b> → unzip → upload the <b>export.xml</b> here.<br>
-         I'll pull every Body Mass reading (one per day kept). Big files are fine — it streams.</p>
+         I'll pull Body Mass readings on/after the date below (one per day kept). Big files are fine — it streams.</p>
+      <div class="field" style="max-width:220px;margin-bottom:10px"><label>Only import readings on/after</label><input type="date" id="b-from" value="2026-05-20"></div>
       <input type="file" id="b-file" accept=".xml">
       <div id="b-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
     </div>`;
@@ -816,6 +817,7 @@ function renderBody(){
 // stream-parse export.xml for BodyMass records (memory-safe for huge files)
 async function importHealth(file){
   const status = document.getElementById('b-status');
+  const fromDate = (document.getElementById('b-from')||{}).value || '';  // YYYY-MM-DD; '' = no cutoff
   status.innerHTML = '<span class="spin"></span> Reading…';
   const re = /<Record[^>]*type="HKQuantityTypeIdentifierBodyMass"[^>]*\/>/g;
   const valRe = /value="([\d.]+)"/, dateRe = /(?:startDate|endDate|creationDate)="(\d{4}-\d{2}-\d{2})/, unitRe=/unit="([^"]+)"/;
@@ -836,10 +838,11 @@ async function importHealth(file){
         const rec = m[0];
         const dm = rec.match(dateRe), vm = rec.match(valRe), um = rec.match(unitRe);
         if(dm && vm){
+          count++;
+          if(fromDate && dm[1] < fromDate) { lastIdx = re.lastIndex; continue; }  // skip readings before cutoff
           let v = parseFloat(vm[1]);
           if(um && /kg/i.test(um[1])) v = v*2.20462;   // normalize to lb
           found[dm[1]] = v;   // last reading on that day wins
-          count++;
         }
         lastIdx = re.lastIndex;
       }
@@ -848,10 +851,16 @@ async function importHealth(file){
       status.innerHTML = `<span class="spin"></span> Scanned ${count.toLocaleString()} readings…`;
     }
     const days = Object.keys(found).length;
-    if(!days){ status.textContent = 'No Body Mass records found in that file.'; return; }
+    if(!days){
+      status.textContent = count
+        ? `Scanned ${count.toLocaleString()} readings but none were on/after ${fromDate}. Pick an earlier date and re-upload.`
+        : 'No Body Mass records found in that file.';
+      return;
+    }
     Object.assign(DATA.body, found);
     save(); renderBody();
-    document.getElementById('b-status').textContent = `✓ Imported ${days} day(s) of weight from ${count.toLocaleString()} readings.`;
+    const since = fromDate ? ` (on/after ${fromDate})` : '';
+    document.getElementById('b-status').textContent = `✓ Imported ${days} day(s) of weight${since}, from ${count.toLocaleString()} readings scanned.`;
   }catch(e){
     status.textContent = 'Could not read file: '+e.message;
   }

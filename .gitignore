@@ -1,0 +1,4 @@
+# Personal Apple Health exports — never publish (repo is public)
+Health Data Exports/
+*.xml
+export*.xml
