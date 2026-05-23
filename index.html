@@ -858,16 +858,17 @@ function renderNutrition(){
     </div>
     <div id="food-results"></div>
     <div class="table-wrap">
-      <table><thead><tr><th>Food</th><th>Grams</th><th>Servings</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th></th></tr></thead>
+      <table><thead><tr><th>Food</th><th>Time</th><th>Grams</th><th>Servings</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th></th></tr></thead>
       <tbody id="food-body">${
         rows.length ? rows.map((r,i)=>{const m=rowMacros(r);return `<tr>
           <td>${r.desc}</td>
+          <td class="muted" style="font-size:12px;white-space:nowrap">${r.t?fmtTime(r.t):'—'}</td>
           <td>${r.per100?`<input class="num gin" data-g="${i}" type="number" inputmode="decimal" value="${r.g}" style="width:66px;padding:4px 6px">`:'<span class="muted">—</span>'}</td>
           <td><input class="num sin" data-s="${i}" type="number" inputmode="decimal" step="any" min="0" value="${r.servings||1}" style="width:54px;padding:4px 6px"></td>
           <td>${Math.round(m.cal)}</td><td>${Math.round(m.p)}</td>
           <td>${Math.round(m.c)}</td><td>${Math.round(m.f)}</td>
           <td><button class="del" data-fdel="${i}">×</button></td></tr>`;}).join('')
-        : `<tr><td colspan="8" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
+        : `<tr><td colspan="9" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
       }</tbody></table>
     </div>
     <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">
@@ -914,7 +915,7 @@ function renderNutrition(){
     if(!name){ root.querySelector('#man-name').focus(); return; }
     if(!cal && !p && !c && !f){ alert('Enter at least one macro value.'); return; }
     if(!DATA.food[day]) DATA.food[day]=[];
-    DATA.food[day].push({desc:name, cal, p, c, f, manual:true});   // flat row (no grams scaling)
+    DATA.food[day].push({desc:name, cal, p, c, f, manual:true, t:Date.now()});   // flat row (no grams scaling)
     save(); renderNutrition();
   };
 }
@@ -973,7 +974,7 @@ async function searchFood(query){
     box.querySelectorAll('[data-pick]').forEach(it=> it.onclick=()=>{
       const h=_foodHits[+it.dataset.pick]; if(!h) return;
       if(!DATA.food[nutDay]) DATA.food[nutDay]=[];
-      DATA.food[nutDay].push({desc:h.desc, g:100, per100:h.per100});
+      DATA.food[nutDay].push({desc:h.desc, g:100, per100:h.per100, t:Date.now()});
       save(); renderNutrition();
     });
   }catch(e){
@@ -1023,12 +1024,12 @@ async function addNL(query){
       const cnFat100 =numOrNull(it.fat_total_g)!=null ? numOrNull(it.fat_total_g)/g*100 : null;
       const per100=await usdaPer100(it.name, cnCarb100);   // accurate cal+protein from USDA
       if(per100){
-        DATA.food[nutDay].push({desc:titleCase(it.name), g:Math.round(g), per100});
+        DATA.food[nutDay].push({desc:titleCase(it.name), g:Math.round(g), per100, t:Date.now()});
       } else {
         // USDA miss/rate-limited — keep CalorieNinjas carbs+fat, mark protein/cal as estimate
         misses++;
         DATA.food[nutDay].push({desc:titleCase(it.name)+' (est.)', g:Math.round(g),
-          per100:{cal:(cnCarb100||0)*4+(cnFat100||0)*9, p:0, c:cnCarb100||0, f:cnFat100||0}});
+          per100:{cal:(cnCarb100||0)*4+(cnFat100||0)*9, p:0, c:cnCarb100||0, f:cnFat100||0}, t:Date.now()});
       }
     }
     save(); renderNutrition();
