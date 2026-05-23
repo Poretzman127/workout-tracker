@@ -81,6 +81,13 @@
   .hl-yellow{background:rgba(245,197,66,.16)!important;border-color:var(--warn)!important;color:var(--warn)!important;}
   .hl-red{background:rgba(255,107,74,.16)!important;border-color:var(--hot)!important;color:var(--hot)!important;}
   .today-sets .set-line.hl-green .so,.today-sets .set-line.hl-yellow .so,.today-sets .set-line.hl-red .so{color:inherit;}
+  /* color key for the set highlights */
+  .legend{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:0 0 16px;
+    padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    font-size:12px;color:var(--muted);}
+  .legend .lg-title{font-weight:700;color:var(--txt);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;}
+  .legend .lg{display:inline-flex;align-items:center;gap:6px;}
+  .legend .sw{width:13px;height:13px;border-radius:4px;border:1px solid;display:inline-block;flex-shrink:0;}
   .opt{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);margin:0 0 12px;cursor:pointer;}
   .opt input{width:auto;}
   .bc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px;}
@@ -124,6 +131,12 @@
     padding:5px 12px;font-size:12.5px;cursor:pointer;color:var(--txt);}
   .prior-chip:hover,.prior-chip.active{border-color:var(--accent);color:var(--accent);}
   .prior-detail{margin-top:8px;}
+  /* editable prior-day set rows */
+  .pe-row{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;}
+  .pe-row .field label{font-size:9.5px;}
+  .pe-row .pe-so{margin-left:auto;color:var(--accent);font-weight:700;font-size:13px;align-self:center;white-space:nowrap;}
+  .pe-row .del{align-self:center;}
   .range-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
   .range-btn{background:var(--panel2);border:1px solid var(--line);color:var(--muted);
     border-radius:999px;padding:4px 13px;font-size:12px;font-weight:600;cursor:pointer;}
@@ -255,12 +268,14 @@ const GROUPS = [
   {id:'back-bicep',   name:'Back & Bicep',  kind:'lift'},
   {id:'chest-tricep', name:'Chest & Tricep',kind:'lift'},
   {id:'legs',         name:'Legs',          kind:'lift'},
+  {id:'abs',          name:'Abs & Core',    kind:'lift'},
   {id:'cardio',       name:'Cardio',        kind:'cardio'},
 ];
 const SEED = {
   'back-bicep':  ['Lat Pulldown','Seated Cable Row','Barbell Row','Pull-Up','Dumbbell Bicep Curl','Hammer Curl','Face Pull'],
   'chest-tricep':['Barbell Bench Press','Incline Dumbbell Press','Machine Chest Fly','Tricep Pushdown','Overhead Tricep Extension','Dips'],
   'legs':        ['Back Squat','Leg Press','Romanian Deadlift','Leg Extension','Seated Leg Curl','Calf Raise'],
+  'abs':         ['Cable Crunch','Hanging Leg Raise','Plank','Russian Twist','Bicycle Crunch','Ab Wheel Rollout','Decline Sit-Up'],
   'cardio':      ['Treadmill','Stationary Bike','Rowing Machine','Elliptical','Stairmaster'],
 };
 const demoUrl = name => `https://www.youtube.com/results?search_query=${encodeURIComponent(name+' proper form')}`;
@@ -332,10 +347,14 @@ function sessionDist(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0), 0); } 
 function pace(s){ return (s.r>0) ? (s.w||0)/1000/s.r : 0; }                           // km/min (from meters)
 function sessionPace(sets){ const t=sessionReps(sets); return t>0 ? sessionDist(sets)/1000/t : 0; }
 function fmtPace(p){ return (Math.round(p*1000)/1000).toLocaleString(undefined,{maximumFractionDigits:3}); }
+// decimal minutes → "mm:ss" for rowing time display
+function fmtDur(min){ let m=Math.floor(min||0), s=Math.round(((min||0)-m)*60); if(s===60){m++;s=0;} return `${m}:${String(s).padStart(2,'0')}`; }
+// "mm:ss" entered as separate fields → decimal minutes stored in r
+function minSecToMin(mn, sc){ return (parseFloat(mn)||0) + (parseFloat(sc)||0)/60; }
 // per-set chip/line text, aware of dumbbell ("35s") and rowing (km in min · pace)
 function setText(w, s){
   if(groupKind(w.group)==='cardio')
-    return isRow(w) ? `${s.w}m in ${s.r}min · ${fmtPace(pace(s))} km/min` : `${s.r}min @ ${s.w}`;
+    return isRow(w) ? `${s.w}m in ${fmtDur(s.r)} · ${fmtPace(pace(s))} km/min` : `${s.r}min @ ${s.w}`;
   return w.db ? `${s.r}×${s.w}s` : `${s.r}×${s.w}`;
 }
 // progression highlight for a lift's latest set vs the one before it (same day)
@@ -389,6 +408,7 @@ async function initSync(){
   }
   ensureSeed();
   ensureMetrics();
+  ensureAbsSeed();
   renderAll(); stampUpdated();
   setSync('ok','Synced');
 }
@@ -427,6 +447,17 @@ function ensureMetrics(){
     else if(!DATA.workouts[nm].metric){ DATA.workouts[nm].metric = id; created = true; }   // backfill an old entry
   }
   if(created) saveLocal();
+}
+// Backfill the Abs & Core group's seed exercises on installs that predate it.
+// Guarded by a SYNCED flag (DATA._absSeeded) so it runs once across all devices and
+// so deletions stick (won't re-add an ab exercise you removed).
+function ensureAbsSeed(){
+  if(DATA._absSeeded) return;
+  for(const name of SEED.abs){
+    if(!DATA.workouts[name]) DATA.workouts[name] = { group:'abs', demo:demoUrl(name), sessions:{} };
+  }
+  DATA._absSeeded = true;
+  saveLocal();
 }
 
 /* ============================== CHART ============================== */
@@ -495,6 +526,12 @@ function workoutsByGroup(gid){
 function renderWorkouts(){
   const root = document.getElementById('view-workouts');
   root.innerHTML = '';
+  root.appendChild(el(`<div class="legend">
+    <span class="lg-title">Set colors</span>
+    <span class="lg"><span class="sw hl-green"></span> Weight class completed</span>
+    <span class="lg"><span class="sw hl-yellow"></span> Continue in weight class</span>
+    <span class="lg"><span class="sw hl-red"></span> Lifted to failure</span>
+  </div>`));
   for(const g of GROUPS){
     const names = workoutsByGroup(g.id);
     const cardio = g.kind==='cardio';
@@ -652,7 +689,10 @@ function renderModal(){
     <div class="block-title">Log a set you just did (${fmtDateLong(today)})</div>
     <div class="field-row">
       <div class="field"><label>${wL}</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="${row?'5000':(cardio?'6.0':'135')}"></div>
-      <div class="field"><label>${rL}</label><input class="num" id="in-r" type="number" inputmode="${cardio?'decimal':'numeric'}" step="any" placeholder="${row?'20':(cardio?'30':'10')}"></div>
+      ${row
+        ? `<div class="field"><label>Min</label><input class="num" id="in-min" type="number" inputmode="numeric" step="any" placeholder="20" style="width:70px"></div>
+           <div class="field"><label>Sec</label><input class="num" id="in-sec" type="number" inputmode="numeric" step="any" placeholder="0" style="width:70px"></div>`
+        : `<div class="field"><label>${rL}</label><input class="num" id="in-r" type="number" inputmode="${cardio?'decimal':'numeric'}" step="any" placeholder="${cardio?'30':'10'}"></div>`}
       <button class="btn" id="add-set">+ Add set</button>
     </div>
     <div class="today-sets" id="today-sets">${
@@ -660,7 +700,7 @@ function renderModal(){
         ? todaySets.map((s,i)=>{
             const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
             const desc = cardio
-              ? (row ? `${s.w} m in ${s.r} min` : `${s.r} min @ level ${s.w}`)
+              ? (row ? `${s.w} m in ${fmtDur(s.r)}` : `${s.r} min @ level ${s.w}`)
               : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
             const so = row ? `${fmtPace(pace(s))} km/min` : (s.w*s.r*dbMult(w)).toLocaleString();
             return `<div class="set-line${hl?' '+hl:''}">
@@ -686,7 +726,9 @@ function renderModal(){
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
   m.querySelector('#add-set').onclick = ()=>{
     const wv = parseFloat(document.getElementById('in-w').value);
-    const rv = cardio ? parseFloat(document.getElementById('in-r').value) : parseInt(document.getElementById('in-r').value,10);
+    const rv = row    ? minSecToMin(document.getElementById('in-min').value, document.getElementById('in-sec').value)
+             : cardio ? parseFloat(document.getElementById('in-r').value)
+             :          parseInt(document.getElementById('in-r').value,10);
     if(isNaN(wv)||isNaN(rv)||rv<=0){ document.getElementById('in-w').focus(); return; }
     if(!w.sessions[today]) w.sessions[today]=[];
     w.sessions[today].push({w:wv, r:rv, t:Date.now()});
@@ -702,6 +744,30 @@ function renderModal(){
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
     renderModal();
   });
+  // prior-day editing — update a logged set's numbers without touching its date
+  m.querySelectorAll('.pe-in').forEach(inp=> inp.onchange=()=>{
+    const i=+inp.dataset.pi, f=inp.dataset.pf, sets=w.sessions[modalPriorDate];
+    if(!sets||!sets[i]) return;
+    const v=parseFloat(inp.value);
+    if(f==='w'){ if(!isNaN(v)) sets[i].w=v; }
+    else if(f==='r'){ if(!isNaN(v)&&v>0) sets[i].r=v; }
+    else if(f==='min'||f==='sec'){
+      const rEl=m.querySelector(`.pe-row[data-pi="${i}"]`);
+      sets[i].r = minSecToMin(rEl.querySelector('[data-pf="min"]').value, rEl.querySelector('[data-pf="sec"]').value);
+    }
+    save(); renderModal(); renderWorkouts();
+  });
+  m.querySelectorAll('[data-prm]').forEach(b=> b.onclick=()=>{
+    const i=+b.dataset.prm, sets=w.sessions[modalPriorDate]; if(!sets) return;
+    sets.splice(i,1);
+    if(!sets.length){ delete w.sessions[modalPriorDate]; modalPriorDate=null; }
+    save(); renderModal(); renderWorkouts();
+  });
+  const padd=m.querySelector('[data-padd]'); if(padd) padd.onclick=()=>{
+    if(!w.sessions[modalPriorDate]) w.sessions[modalPriorDate]=[];
+    w.sessions[modalPriorDate].push({w:0, r:0});   // back-dated entry: no timestamp
+    save(); renderModal(); renderWorkouts();
+  };
 }
 // modal for a daily-total metric: line chart + per-day add/edit + recent list
 function renderMetricModal(){
@@ -756,19 +822,40 @@ function renderMetricModal(){
     save(); renderMetricModal(); renderWorkouts();
   });
 }
+// Prior-day detail — now EDITABLE: change weight/reps (or distance/min/sec) in place; the date never moves.
 function priorDetailHtml(name){
   if(!modalPriorDate) return '';
   const w = DATA.workouts[name], gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w);
   const sets = w.sessions[modalPriorDate]||[];
   const head = row
     ? `${fmtDateLong(modalPriorDate)} · ${sessionDist(sets)} m · ${fmtPace(sessionPace(sets))} km/min`
+    : cardio ? `${fmtDateLong(modalPriorDate)}`
     : `${fmtDateLong(modalPriorDate)} · output ${workoutOutput(w, sets).toLocaleString()}`;
-  return `<div class="today-sets">
+  const wL = row?'Dist (m)':(cardio?'Spd/Lvl':'Weight');
+  const rL = cardio?'Minutes':'Reps';
+  const rowsHtml = sets.map((s,i)=>{
+    const so = row ? `${fmtPace(pace(s))} km/min`
+             : cardio ? ''
+             : (s.w*s.r*dbMult(w)).toLocaleString()+(w.db?' (db)':'');
+    let inputs;
+    if(row){
+      const mn=Math.floor(s.r||0), sc=Math.round(((s.r||0)-mn)*60);
+      inputs = `<div class="field"><label>Dist (m)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>
+        <div class="field"><label>Min</label><input class="num pe-in" data-pf="min" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${mn}" style="width:60px"></div>
+        <div class="field"><label>Sec</label><input class="num pe-in" data-pf="sec" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${sc}" style="width:60px"></div>`;
+    } else {
+      inputs = `<div class="field"><label>${wL}</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>
+        <div class="field"><label>${rL}</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="${cardio?'decimal':'numeric'}" value="${s.r}" style="width:74px"></div>`;
+    }
+    return `<div class="pe-row" data-pi="${i}">${inputs}
+      ${so?`<span class="pe-so">${so}</span>`:''}
+      <button class="del" data-prm="${i}" title="Remove this set">×</button></div>`;
+  }).join('');
+  return `<div class="prior-edit">
     <div class="block-title" style="margin-top:4px">${head}</div>
-    ${sets.map(s=>{
-      const desc = cardio ? (row?`${s.w} m in ${s.r} min`:`${s.r} min @ level ${s.w}`) : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
-      const so = row ? `${fmtPace(pace(s))} km/min` : (s.w*s.r*dbMult(w)).toLocaleString();
-      return `<div class="set-line"><span>${desc}</span><span class="so">${so}</span></div>`;}).join('')}
+    <div class="modal-sub" style="margin:-2px 0 8px">Edit the numbers below — the date stays ${fmtDate(modalPriorDate)}.</div>
+    ${rowsHtml || '<div class="muted" style="font-size:13px">No sets on this day.</div>'}
+    <button class="btn ghost sm" data-padd="1" style="margin-top:4px">+ Add set to ${fmtDate(modalPriorDate)}</button>
   </div>`;
 }
 function renameWorkout(name){
