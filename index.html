@@ -76,6 +76,13 @@
   .del{color:var(--muted);cursor:pointer;border:none;background:none;font-size:15px;padding:2px 6px;}
   .del:hover{color:var(--hot);}
   .empty{padding:18px;color:var(--muted);text-align:center;font-size:13px;}
+  /* progression highlight on the latest set (chips + modal lines) */
+  .hl-green{background:rgba(52,211,153,.16)!important;border-color:var(--accent)!important;color:var(--accent)!important;}
+  .hl-yellow{background:rgba(245,197,66,.16)!important;border-color:var(--warn)!important;color:var(--warn)!important;}
+  .hl-red{background:rgba(255,107,74,.16)!important;border-color:var(--hot)!important;color:var(--hot)!important;}
+  .today-sets .set-line.hl-green .so,.today-sets .set-line.hl-yellow .so,.today-sets .set-line.hl-red .so{color:inherit;}
+  .opt{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);margin:0 0 12px;cursor:pointer;}
+  .opt input{width:auto;}
 
   /* modal */
   .overlay{position:fixed;inset:0;background:rgba(4,6,10,.72);backdrop-filter:blur(3px);
@@ -283,6 +290,29 @@ function lastActivity(w){
 }
 function sessionOutput(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0)*(s.r||0), 0); }
 function sessionReps(sets){ return (sets||[]).reduce((a,s)=>a + (s.r||0), 0); }
+// dumbbell = two separate weights → double the volume. rowing stores w=distance(km), r=time(min); pace=km/min, no output.
+function dbMult(w){ return (w && w.db) ? 2 : 1; }
+function isRow(w){ return !!(w && w.row); }
+function workoutOutput(w, sets){ return sessionOutput(sets) * dbMult(w); }
+function sessionDist(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0), 0); }       // km (rowing)
+function pace(s){ return (s.r>0) ? (s.w||0)/s.r : 0; }                                // km/min
+function sessionPace(sets){ const t=sessionReps(sets); return t>0 ? sessionDist(sets)/t : 0; }
+function fmtPace(p){ return (Math.round(p*1000)/1000).toLocaleString(undefined,{maximumFractionDigits:3}); }
+// per-set chip/line text, aware of dumbbell ("35s") and rowing (km in min · pace)
+function setText(w, s){
+  if(groupKind(w.group)==='cardio')
+    return isRow(w) ? `${s.w}km in ${s.r}min · ${fmtPace(pace(s))} km/min` : `${s.r}min @ ${s.w}`;
+  return w.db ? `${s.r}×${s.w}s` : `${s.r}×${s.w}`;
+}
+// progression highlight for a lift's latest set vs the one before it (same day)
+function setHighlight(w, sets){
+  if(!sets || sets.length<2 || groupKind(w.group)==='cardio' || isMetric(w)) return '';
+  const a=sets[sets.length-2], b=sets[sets.length-1];
+  if(b.w===a.w && b.r===a.r) return 'hl-green';   // dominated weight class
+  if(b.w===a.w && b.r<a.r)   return 'hl-yellow';  // almost dominated
+  if(b.w> a.w && b.r<a.r)    return 'hl-red';     // pushed heavier to failure
+  return '';
+}
 function sortedDates(obj){ return Object.keys(obj||{}).sort(); }      // asc
 function groupKind(gid){ return (GROUPS.find(g=>g.id===gid)||{}).kind; }
 function isMetric(w){ return !!(w && w.metric); }
@@ -428,11 +458,6 @@ function workoutsByGroup(gid){
       return a.localeCompare(b);                     // never logged: alphabetical
     });
 }
-function setLabel(gid, s){
-  return groupKind(gid)==='cardio'
-    ? `${s.r}min @ ${s.w}`
-    : `${s.r}×${s.w}`;
-}
 function renderWorkouts(){
   const root = document.getElementById('view-workouts');
   root.innerHTML = '';
@@ -463,15 +488,19 @@ function renderWorkouts(){
         const dts = sortedDates(w.sessions);
         const last = dts[dts.length-1];
         const sets = last ? w.sessions[last] : [];
-        const out = last ? sessionOutput(sets) : null;
+        const row = isRow(w);
+        const hl = last ? setHighlight(w, sets) : '';
         const setsHtml = last
-          ? sets.map(s=>`<span class="set">${setLabel(g.id,s)}</span>`).join('')
+          ? sets.map((s,si)=>`<span class="set${(si===sets.length-1&&hl)?' '+hl:''}">${setText(w,s)}</span>`).join('')
           : '<span class="muted">—</span>';
+        const outCell = !last ? '<span class="muted">—</span>'
+          : row ? `<span class="out-val">${fmtPace(sessionPace(sets))}</span> <span class="muted">km/min</span>`
+                : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span>`;
         const lt = last ? lastSetTime(sets) : null;
         const tr = el(`<tr>
           <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
               <span class="info-ic" data-demo="${encodeURIComponent(name)}" title="How to do it">ℹ</span></td>
-          <td data-label="${cardio?'Work':'Output (lbs)'}">${out==null?'<span class="muted">—</span>':`<span class="out-val">${out.toLocaleString()}</span>`}</td>
+          <td data-label="${cardio?(row?'Pace':'Work'):'Output (lbs)'}">${outCell}</td>
           <td data-label="Last">${last?fmtDate(last)+(lt?` · ${fmtTime(lt)}`:''):'<span class="muted">—</span>'}</td>
           <td class="sets-cell" data-label="Sets">${setsHtml}</td>
           <td class="c-del"><button class="del" data-del="${encodeURIComponent(name)}" title="Delete">×</button></td>
@@ -549,33 +578,38 @@ function renderModal(){
   const today = todayStr();
   const todaySets = w.sessions[today] || [];
 
+  const row = isRow(w);
   // chart points across sessions (filtered by the selected time range)
   const cdts = filterDates(dts);
-  const ptsOut = cdts.map(d=>({label:fmtDate(d), value:sessionOutput(w.sessions[d])}));
+  const ptsOut = cdts.map(d=>({label:fmtDate(d), value: row?sessionPace(w.sessions[d]):workoutOutput(w, w.sessions[d])}));
   const ptsRep = cdts.map(d=>({label:fmtDate(d), value:sessionReps(w.sessions[d])}));
   const ptsSet = cdts.map(d=>({label:fmtDate(d), value:w.sessions[d].length}));
   const lastOut = ptsOut.length?ptsOut[ptsOut.length-1].value:0;
   const lastRep = ptsRep.length?ptsRep[ptsRep.length-1].value:0;
   const lastSet = ptsSet.length?ptsSet[ptsSet.length-1].value:0;
 
-  const wL = cardio?'Speed/Level':'Weight';
-  const rL = cardio?'Minutes':'Reps';
+  const wL = row?'Distance (km)':(cardio?'Speed/Level':'Weight');
+  const rL = row?'Time (min)':(cardio?'Minutes':'Reps');
 
   const m = document.getElementById('w-modal');
   m.innerHTML = `
     <div class="modal-head">
       <h3>${name}</h3>
+      <button class="btn ghost sm" id="w-rename" style="margin-left:auto">✏️ Rename</button>
       <button class="x" id="w-close">×</button>
     </div>
     <div class="modal-sub">${(GROUPS.find(g=>g.id===gid)||{}).name} ·
       <a href="${w.demo}" target="_blank" rel="noopener">▶ form demo</a> ·
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
+    ${cardio
+      ? `<label class="opt"><input type="checkbox" id="w-row"${row?' checked':''}> Rowing mode — log distance &amp; time, show km/min</label>`
+      : `<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
 
     ${rangeToggle()}
     <div class="charts">
-      <div class="chart-card"><div class="clab">${cardio?'Work':'Total Output'}</div>
-        <div class="cval">${lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut,'#34d399')}</div>
-      <div class="chart-card"><div class="clab">${cardio?'Total Min':'Total Reps'}</div>
+      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':(cardio?'Work':'Total Output')}</div>
+        <div class="cval">${row?fmtPace(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, row?'#22d3ee':'#34d399')}</div>
+      <div class="chart-card"><div class="clab">${row?'Total Min':(cardio?'Total Min':'Total Reps')}</div>
         <div class="cval">${lastRep.toLocaleString()}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
       <div class="chart-card"><div class="clab">Sets</div>
         <div class="cval">${lastSet}<small> last</small></div>${spark(ptsSet,'#f5c542')}</div>
@@ -583,16 +617,22 @@ function renderModal(){
 
     <div class="block-title">Log a set you just did (${fmtDateLong(today)})</div>
     <div class="field-row">
-      <div class="field"><label>${wL}</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="${cardio?'6.0':'135'}"></div>
-      <div class="field"><label>${rL}</label><input class="num" id="in-r" type="number" inputmode="numeric" placeholder="${cardio?'30':'10'}"></div>
+      <div class="field"><label>${wL}</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="${row?'5':(cardio?'6.0':'135')}"></div>
+      <div class="field"><label>${rL}</label><input class="num" id="in-r" type="number" inputmode="${cardio?'decimal':'numeric'}" step="any" placeholder="${row?'20':(cardio?'30':'10')}"></div>
       <button class="btn" id="add-set">+ Add set</button>
     </div>
     <div class="today-sets" id="today-sets">${
       todaySets.length
-        ? todaySets.map((s,i)=>`<div class="set-line">
-            <span>${cardio?`${s.r} min @ level ${s.w}`:`${s.r} reps @ ${s.w} lb`}</span>
-            <span class="so">${(s.w*s.r).toLocaleString()}</span>
-            <button class="del" data-rm="${i}">×</button></div>`).join('')
+        ? todaySets.map((s,i)=>{
+            const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
+            const desc = cardio
+              ? (row ? `${s.w} km in ${s.r} min` : `${s.r} min @ level ${s.w}`)
+              : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
+            const so = row ? `${fmtPace(pace(s))} km/min` : (s.w*s.r*dbMult(w)).toLocaleString();
+            return `<div class="set-line${hl?' '+hl:''}">
+            <span>${desc}</span>
+            <span class="so">${so}</span>
+            <button class="del" data-rm="${i}">×</button></div>`;}).join('')
         : `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`
     }</div>
 
@@ -606,10 +646,13 @@ function renderModal(){
   `;
   // wire
   m.querySelector('#w-close').onclick = closeWorkout;
+  m.querySelector('#w-rename').onclick = ()=>renameWorkout(name);
+  const dbc = m.querySelector('#w-db'); if(dbc) dbc.onchange=()=>{ w.db=dbc.checked; save(); renderModal(); renderWorkouts(); };
+  const rwc = m.querySelector('#w-row'); if(rwc) rwc.onchange=()=>{ w.row=rwc.checked; save(); renderModal(); renderWorkouts(); };
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
   m.querySelector('#add-set').onclick = ()=>{
     const wv = parseFloat(document.getElementById('in-w').value);
-    const rv = parseInt(document.getElementById('in-r').value,10);
+    const rv = cardio ? parseFloat(document.getElementById('in-r').value) : parseInt(document.getElementById('in-r').value,10);
     if(isNaN(wv)||isNaN(rv)||rv<=0){ document.getElementById('in-w').focus(); return; }
     if(!w.sessions[today]) w.sessions[today]=[];
     w.sessions[today].push({w:wv, r:rv, t:Date.now()});
@@ -681,14 +724,29 @@ function renderMetricModal(){
 }
 function priorDetailHtml(name){
   if(!modalPriorDate) return '';
-  const w = DATA.workouts[name], gid=w.group, cardio=groupKind(gid)==='cardio';
+  const w = DATA.workouts[name], gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w);
   const sets = w.sessions[modalPriorDate]||[];
+  const head = row
+    ? `${fmtDateLong(modalPriorDate)} · ${sessionDist(sets)} km · ${fmtPace(sessionPace(sets))} km/min`
+    : `${fmtDateLong(modalPriorDate)} · output ${workoutOutput(w, sets).toLocaleString()}`;
   return `<div class="today-sets">
-    <div class="block-title" style="margin-top:4px">${fmtDateLong(modalPriorDate)} · output ${sessionOutput(sets).toLocaleString()}</div>
-    ${sets.map(s=>`<div class="set-line">
-        <span>${cardio?`${s.r} min @ level ${s.w}`:`${s.r} reps @ ${s.w} lb`}</span>
-        <span class="so">${(s.w*s.r).toLocaleString()}</span></div>`).join('')}
+    <div class="block-title" style="margin-top:4px">${head}</div>
+    ${sets.map(s=>{
+      const desc = cardio ? (row?`${s.w} km in ${s.r} min`:`${s.r} min @ level ${s.w}`) : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
+      const so = row ? `${fmtPace(pace(s))} km/min` : (s.w*s.r*dbMult(w)).toLocaleString();
+      return `<div class="set-line"><span>${desc}</span><span class="so">${so}</span></div>`;}).join('')}
   </div>`;
+}
+function renameWorkout(name){
+  const nn = prompt('Rename workout:', name);
+  if(nn===null) return;
+  const clean = nn.trim();
+  if(!clean || clean===name) return;
+  if(DATA.workouts[clean]){ alert('A workout with that name already exists.'); return; }
+  DATA.workouts[clean] = DATA.workouts[name];     // carries sessions, db/row/created flags
+  delete DATA.workouts[name];
+  if(modalName===name) modalName = clean;
+  save(); renderModal(); renderWorkouts();
 }
 
 /* ----- demo popout ----- */
@@ -722,11 +780,13 @@ function foodMacros(r){
   if(r.per100){ const k=(r.g||0)/100; return {cal:r.per100.cal*k, p:r.per100.p*k, c:r.per100.c*k, f:r.per100.f*k}; }
   return {cal:r.cal||0, p:r.p||0, c:r.c||0, f:r.f||0};   // legacy flat rows
 }
+// servings multiplier on top of the base macros (default 1 serving)
+function rowMacros(r){ const m=foodMacros(r), s=r.servings||1; return {cal:m.cal*s, p:m.p*s, c:m.c*s, f:m.f*s}; }
 function renderNutrition(){
   const root = document.getElementById('view-nutrition');
   const day = nutDay;
   const rows = DATA.food[day] || [];
-  const tot = rows.reduce((a,r)=>{const m=foodMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f};},{cal:0,p:0,c:0,f:0});
+  const tot = rows.reduce((a,r)=>{const m=rowMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f};},{cal:0,p:0,c:0,f:0});
   root.innerHTML = `
     <div class="day-nav">
       <button class="arrow" id="d-prev">‹</button>
@@ -766,15 +826,16 @@ function renderNutrition(){
     </div>
     <div id="food-results"></div>
     <div class="table-wrap">
-      <table><thead><tr><th>Food</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th></th></tr></thead>
+      <table><thead><tr><th>Food</th><th>Grams</th><th>Servings</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th></th></tr></thead>
       <tbody id="food-body">${
-        rows.length ? rows.map((r,i)=>{const m=foodMacros(r);return `<tr>
+        rows.length ? rows.map((r,i)=>{const m=rowMacros(r);return `<tr>
           <td>${r.desc}</td>
           <td>${r.per100?`<input class="num gin" data-g="${i}" type="number" inputmode="decimal" value="${r.g}" style="width:66px;padding:4px 6px">`:'<span class="muted">—</span>'}</td>
+          <td><input class="num sin" data-s="${i}" type="number" inputmode="decimal" step="any" min="0" value="${r.servings||1}" style="width:54px;padding:4px 6px"></td>
           <td>${Math.round(m.cal)}</td><td>${Math.round(m.p)}</td>
           <td>${Math.round(m.c)}</td><td>${Math.round(m.f)}</td>
           <td><button class="del" data-fdel="${i}">×</button></td></tr>`;}).join('')
-        : `<tr><td colspan="7" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
+        : `<tr><td colspan="8" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
       }</tbody></table>
     </div>
     <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">
@@ -802,6 +863,10 @@ function renderNutrition(){
   root.querySelectorAll('.gin').forEach(inp=> inp.onchange=()=>{
     const g=parseFloat(inp.value); if(isNaN(g)||g<0) return;
     DATA.food[day][+inp.dataset.g].g = g; save(); renderNutrition();
+  });
+  root.querySelectorAll('.sin').forEach(inp=> inp.onchange=()=>{
+    const s=parseFloat(inp.value); if(isNaN(s)||s<0) return;
+    DATA.food[day][+inp.dataset.s].servings = s; save(); renderNutrition();
   });
   const mf = root.querySelector('#manual-form');
   root.querySelector('#food-manual').onclick = ()=>{
