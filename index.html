@@ -641,7 +641,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d';
+let modalName = null, modalPriorDate = null, modalRange = '7d', editToday = false;
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
 const RANGE_LABEL = {'7d':'7D', '15d':'15D', '30d':'30D', '1y':'1Y', 'all':'All'};
@@ -657,7 +657,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d';   // default each open to 7 days
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editToday = false;   // default each open to 7 days, view mode
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -723,9 +723,16 @@ function renderModal(){
              : `<div class="field"><label>${rL}</label><input class="num" id="in-r" type="number" inputmode="${cardio?'decimal':'numeric'}" step="any" placeholder="${cardio?'30':'10'}"></div>`}`}
       <button class="btn" id="add-set">+ Add set</button>
     </div>
+    ${todaySets.length?`<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
+      <span>Today's sets</span>
+      <button class="btn ghost mini" id="edit-today" style="margin-left:auto">${editToday?'✓ Done':'✎ Edit'}</button>
+    </div>`:''}
     <div class="today-sets" id="today-sets">${
-      todaySets.length
-        ? todaySets.map((s,i)=>{
+      !todaySets.length
+        ? `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`
+        : editToday
+        ? editableSets(w, today)
+        : todaySets.map((s,i)=>{
             const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
             const desc = cardio
               ? (row ? `${s.w} m in ${fmtDur(s.r)}` : `${s.r} min @ level ${s.w}`)
@@ -737,7 +744,6 @@ function renderModal(){
             <span>${desc}</span>
             <span class="so">${so}</span>
             <button class="del" data-rm="${i}">×</button></div>`;}).join('')
-        : `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`
     }</div>
 
     <div class="block-title">Prior sessions</div>
@@ -775,6 +781,7 @@ function renderModal(){
     w.sessions[today].push({w:wv, r:rv, t:Date.now()});
     save(); renderModal(); renderWorkouts();
   };
+  const et = m.querySelector('#edit-today'); if(et) et.onclick=()=>{ editToday=!editToday; renderModal(); };
   m.querySelectorAll('[data-rm]').forEach(b=> b.onclick=()=>{
     const i = +b.dataset.rm;
     w.sessions[today].splice(i,1);
@@ -785,30 +792,8 @@ function renderModal(){
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
     renderModal();
   });
-  // prior-day editing — update a logged set's numbers without touching its date
-  m.querySelectorAll('.pe-in').forEach(inp=> inp.onchange=()=>{
-    const i=+inp.dataset.pi, f=inp.dataset.pf, sets=w.sessions[modalPriorDate];
-    if(!sets||!sets[i]) return;
-    const v=parseFloat(inp.value);
-    if(f==='w'){ if(isHold(w)) sets[i].w = isNaN(v)?0:v; else if(!isNaN(v)) sets[i].w=v; }   // hold weight optional → blank=bodyweight
-    else if(f==='r'){ if(!isNaN(v)&&v>0) sets[i].r=v; }
-    else if(f==='min'||f==='sec'){
-      const rEl=m.querySelector(`.pe-row[data-pi="${i}"]`);
-      sets[i].r = minSecToMin(rEl.querySelector('[data-pf="min"]').value, rEl.querySelector('[data-pf="sec"]').value);
-    }
-    save(); renderModal(); renderWorkouts();
-  });
-  m.querySelectorAll('[data-prm]').forEach(b=> b.onclick=()=>{
-    const i=+b.dataset.prm, sets=w.sessions[modalPriorDate]; if(!sets) return;
-    sets.splice(i,1);
-    if(!sets.length){ delete w.sessions[modalPriorDate]; modalPriorDate=null; }
-    save(); renderModal(); renderWorkouts();
-  });
-  const padd=m.querySelector('[data-padd]'); if(padd) padd.onclick=()=>{
-    if(!w.sessions[modalPriorDate]) w.sessions[modalPriorDate]=[];
-    w.sessions[modalPriorDate].push({w:0, r:0});   // back-dated entry: no timestamp
-    save(); renderModal(); renderWorkouts();
-  };
+  // editable set rows for today (edit mode) and the open prior day — both scoped by data-editdate
+  wireSetEditors(m, w);
 }
 // modal for a daily-total metric: line chart + per-day add/edit + recent list
 function renderMetricModal(){
@@ -863,7 +848,72 @@ function renderMetricModal(){
     save(); renderMetricModal(); renderWorkouts();
   });
 }
-// Prior-day detail — now EDITABLE: change weight/reps (or distance/min/sec) in place; the date never moves.
+// One editable set row (weight/reps, or distance/min/sec, or hold time+weight, or reps-only)
+function setEditRow(w, s, i){
+  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w);
+  const wL = row?'Dist (m)':(cardio?'Spd/Lvl':'Weight');
+  const rL = cardio?'Minutes':'Reps';
+  const so = row ? `${fmtPace(pace(s))} km/min`
+           : (hold||repsOnly) ? ''
+           : cardio ? ''
+           : (s.w*s.r*dbMult(w)).toLocaleString()+(w.db?' (db)':'');
+  let inputs;
+  if(repsOnly){
+    inputs = `<div class="field"><label>Reps</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${s.r}" style="width:74px"></div>`;
+  } else if(row || hold){
+    const mn=Math.floor(s.r||0), sc=Math.round(((s.r||0)-mn)*60);
+    const timeFields = `<div class="field"><label>Min</label><input class="num pe-in" data-pf="min" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${mn}" style="width:60px"></div>
+      <div class="field"><label>Sec</label><input class="num pe-in" data-pf="sec" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${sc}" style="width:60px"></div>`;
+    inputs = row
+      ? `<div class="field"><label>Dist (m)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>${timeFields}`
+      : `${timeFields}<div class="field"><label>Wt (lb)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w||''}" placeholder="—" style="width:74px"></div>`;
+  } else {
+    inputs = `<div class="field"><label>${wL}</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>
+      <div class="field"><label>${rL}</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="${cardio?'decimal':'numeric'}" value="${s.r}" style="width:74px"></div>`;
+  }
+  return `<div class="pe-row" data-pi="${i}">${inputs}
+    ${so?`<span class="pe-so">${so}</span>`:''}
+    <button class="del" data-prm="${i}" title="Remove this set">×</button></div>`;
+}
+// Editable list of a day's sets + an add button. Scoped by data-editdate so today & a prior day
+// can both be editable at once without their handlers colliding. Wired by wireSetEditors().
+function editableSets(w, date){
+  const sets = w.sessions[date]||[];
+  const rowsHtml = sets.map((s,i)=>setEditRow(w,s,i)).join('');
+  return `<div class="set-editor" data-editdate="${date}">
+    ${rowsHtml || '<div class="muted" style="font-size:13px">No sets on this day.</div>'}
+    <button class="btn ghost sm" data-padd="1" style="margin-top:4px">+ Add set</button>
+  </div>`;
+}
+function wireSetEditors(m, w){
+  m.querySelectorAll('.set-editor').forEach(box=>{
+    const date = box.dataset.editdate;
+    box.querySelectorAll('.pe-in').forEach(inp=> inp.onchange=()=>{
+      const i=+inp.dataset.pi, f=inp.dataset.pf, sets=w.sessions[date];
+      if(!sets||!sets[i]) return;
+      const v=parseFloat(inp.value);
+      if(f==='w'){ if(isHold(w)) sets[i].w = isNaN(v)?0:v; else if(!isNaN(v)) sets[i].w=v; }   // hold weight optional → blank=bodyweight
+      else if(f==='r'){ if(!isNaN(v)&&v>0) sets[i].r=v; }
+      else if(f==='min'||f==='sec'){
+        const rEl=box.querySelector(`.pe-row[data-pi="${i}"]`);
+        sets[i].r = minSecToMin(rEl.querySelector('[data-pf="min"]').value, rEl.querySelector('[data-pf="sec"]').value);
+      }
+      save(); renderModal(); renderWorkouts();
+    });
+    box.querySelectorAll('[data-prm]').forEach(b=> b.onclick=()=>{
+      const i=+b.dataset.prm, sets=w.sessions[date]; if(!sets) return;
+      sets.splice(i,1);
+      if(!sets.length){ delete w.sessions[date]; if(date===modalPriorDate) modalPriorDate=null; }
+      save(); renderModal(); renderWorkouts();
+    });
+    const padd=box.querySelector('[data-padd]'); if(padd) padd.onclick=()=>{
+      if(!w.sessions[date]) w.sessions[date]=[];
+      w.sessions[date].push(date===todayStr() ? {w:0, r:0, t:Date.now()} : {w:0, r:0});   // back-dated entry: no timestamp
+      save(); renderModal(); renderWorkouts();
+    };
+  });
+}
+// Prior-day detail — EDITABLE: change weight/reps (or distance/min/sec) in place; the date never moves.
 function priorDetailHtml(name){
   if(!modalPriorDate) return '';
   const w = DATA.workouts[name], gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w);
@@ -874,36 +924,10 @@ function priorDetailHtml(name){
     : repsOnly ? `${fmtDateLong(modalPriorDate)} · ${sessionReps(sets)} reps`
     : cardio ? `${fmtDateLong(modalPriorDate)}`
     : `${fmtDateLong(modalPriorDate)} · output ${workoutOutput(w, sets).toLocaleString()}`;
-  const wL = row?'Dist (m)':(cardio?'Spd/Lvl':'Weight');
-  const rL = cardio?'Minutes':'Reps';
-  const rowsHtml = sets.map((s,i)=>{
-    const so = row ? `${fmtPace(pace(s))} km/min`
-             : (hold||repsOnly) ? ''
-             : cardio ? ''
-             : (s.w*s.r*dbMult(w)).toLocaleString()+(w.db?' (db)':'');
-    let inputs;
-    if(repsOnly){
-      inputs = `<div class="field"><label>Reps</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${s.r}" style="width:74px"></div>`;
-    } else if(row || hold){
-      const mn=Math.floor(s.r||0), sc=Math.round(((s.r||0)-mn)*60);
-      const timeFields = `<div class="field"><label>Min</label><input class="num pe-in" data-pf="min" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${mn}" style="width:60px"></div>
-        <div class="field"><label>Sec</label><input class="num pe-in" data-pf="sec" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${sc}" style="width:60px"></div>`;
-      inputs = row
-        ? `<div class="field"><label>Dist (m)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>${timeFields}`
-        : `${timeFields}<div class="field"><label>Wt (lb)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w||''}" placeholder="—" style="width:74px"></div>`;
-    } else {
-      inputs = `<div class="field"><label>${wL}</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>
-        <div class="field"><label>${rL}</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="${cardio?'decimal':'numeric'}" value="${s.r}" style="width:74px"></div>`;
-    }
-    return `<div class="pe-row" data-pi="${i}">${inputs}
-      ${so?`<span class="pe-so">${so}</span>`:''}
-      <button class="del" data-prm="${i}" title="Remove this set">×</button></div>`;
-  }).join('');
   return `<div class="prior-edit">
     <div class="block-title" style="margin-top:4px">${head}</div>
     <div class="modal-sub" style="margin:-2px 0 8px">Edit the numbers below — the date stays ${fmtDate(modalPriorDate)}.</div>
-    ${rowsHtml || '<div class="muted" style="font-size:13px">No sets on this day.</div>'}
-    <button class="btn ghost sm" data-padd="1" style="margin-top:4px">+ Add set to ${fmtDate(modalPriorDate)}</button>
+    ${editableSets(w, modalPriorDate)}
   </div>`;
 }
 function renameWorkout(name){
