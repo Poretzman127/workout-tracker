@@ -134,7 +134,7 @@
   .day-nav .arrow{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
     border-radius:8px;width:34px;height:34px;font-size:16px;cursor:pointer;}
   .day-nav .date{font-weight:700;font-size:15px;}
-  .totals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 16px;}
+  .totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 16px;}
   .tcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;}
   .tcard .tn{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
   .tcard .tv{font-size:20px;font-weight:800;margin-top:2px;}
@@ -248,7 +248,7 @@ const AI_MODEL   = 'claude-haiku-4-5';
 const aiKey   = () => (localStorage.getItem(LS_AI)||'').trim() || AI_DEFAULT;
 // Daily macro targets — defaults are the FDA Daily Values for a 2,000-calorie diet
 // (https://www.fda.gov/food/nutrition-facts-label). Stored in DATA so they sync across devices.
-const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78, fib:28};
+const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78, fib:28, sod:2300};
 const goals = () => ({...DEFAULT_GOALS, ...(DATA.goals||{})});
 
 const GROUPS = [
@@ -809,18 +809,18 @@ function deleteWorkout(name){
 /* ============================== RENDER: NUTRITION ============================== */
 // macros for a logged row (rows store per-100g base + grams, so editing grams rescales)
 function foodMacros(r){
-  if(r.per100){ const k=(r.g||0)/100; return {cal:r.per100.cal*k, p:r.per100.p*k, c:r.per100.c*k, f:r.per100.f*k}; }
-  return {cal:r.cal||0, p:r.p||0, c:r.c||0, f:r.f||0};   // legacy flat rows
+  if(r.per100){ const k=(r.g||0)/100; return {cal:r.per100.cal*k, p:r.per100.p*k, c:r.per100.c*k, f:r.per100.f*k, fib:(r.per100.fib||0)*k, sod:(r.per100.sod||0)*k}; }
+  return {cal:r.cal||0, p:r.p||0, c:r.c||0, f:r.f||0, fib:r.fib||0, sod:r.sod||0};   // legacy flat rows
 }
 // servings multiplier on top of the base macros (default 1 serving)
-function rowMacros(r){ const m=foodMacros(r), s=r.servings||1; return {cal:m.cal*s, p:m.p*s, c:m.c*s, f:m.f*s}; }
+function rowMacros(r){ const m=foodMacros(r), s=r.servings||1; return {cal:m.cal*s, p:m.p*s, c:m.c*s, f:m.f*s, fib:m.fib*s, sod:m.sod*s}; }
 // timestamp a food only when logging for TODAY (back-dated entries get no time)
 function stampNow(){ return nutDay===todayStr() ? Date.now() : undefined; }
 function renderNutrition(){
   const root = document.getElementById('view-nutrition');
   const day = nutDay;
   const rows = DATA.food[day] || [];
-  const tot = rows.reduce((a,r)=>{const m=rowMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f};},{cal:0,p:0,c:0,f:0});
+  const tot = rows.reduce((a,r)=>{const m=rowMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f,fib:a.fib+m.fib,sod:a.sod+m.sod};},{cal:0,p:0,c:0,f:0,fib:0,sod:0});
   root.innerHTML = `
     <div class="day-nav">
       <button class="arrow" id="d-prev">‹</button>
@@ -832,6 +832,8 @@ function renderNutrition(){
       <div class="tcard p"><div class="tn">Protein</div><div class="tv">${Math.round(tot.p)}<small style="font-size:11px">g</small></div>${goalLine(tot.p, goals().p, true, 'g')}</div>
       <div class="tcard c"><div class="tn">Carbs</div><div class="tv">${Math.round(tot.c)}<small style="font-size:11px">g</small></div>${goalLine(tot.c, goals().c, false, 'g')}</div>
       <div class="tcard f"><div class="tn">Fat</div><div class="tv">${Math.round(tot.f)}<small style="font-size:11px">g</small></div>${goalLine(tot.f, goals().f, false, 'g')}</div>
+      <div class="tcard"><div class="tn">Fiber</div><div class="tv">${Math.round(tot.fib)}<small style="font-size:11px">g</small></div>${goalLine(tot.fib, goals().fib, true, 'g')}</div>
+      <div class="tcard"><div class="tn">Sodium</div><div class="tv">${Math.round(tot.sod)}<small style="font-size:11px">mg</small></div>${goalLine(tot.sod, goals().sod, false, 'mg')}</div>
     </div>
     ${cnKey()
       ? `<div class="food-input">
@@ -855,12 +857,14 @@ function renderNutrition(){
         <div class="field"><label>Protein (g)</label><input class="num" id="man-p" type="number" inputmode="decimal" placeholder="0"></div>
         <div class="field"><label>Carbs (g)</label><input class="num" id="man-c" type="number" inputmode="decimal" placeholder="0"></div>
         <div class="field"><label>Fat (g)</label><input class="num" id="man-f" type="number" inputmode="decimal" placeholder="0"></div>
+        <div class="field"><label>Fiber (g)</label><input class="num" id="man-fib" type="number" inputmode="decimal" placeholder="0"></div>
+        <div class="field"><label>Sodium (mg)</label><input class="num" id="man-sod" type="number" inputmode="numeric" placeholder="0"></div>
         <button class="btn" id="man-add">Add</button>
       </div>
     </div>
     <div id="food-results"></div>
     <div class="table-wrap">
-      <table><thead><tr><th>Food</th><th>Time</th><th>Grams</th><th>Servings</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th></th></tr></thead>
+      <table><thead><tr><th>Food</th><th>Time</th><th>Grams</th><th>Servings</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th>Fiber</th><th>Sodium</th><th></th></tr></thead>
       <tbody id="food-body">${
         rows.length ? rows.map((r,i)=>{const m=rowMacros(r);return `<tr>
           <td>${r.desc}</td>
@@ -869,8 +873,9 @@ function renderNutrition(){
           <td><input class="num sin" data-s="${i}" type="number" inputmode="decimal" step="any" min="0" value="${r.servings||1}" style="width:54px;padding:4px 6px"></td>
           <td>${Math.round(m.cal)}</td><td>${Math.round(m.p)}</td>
           <td>${Math.round(m.c)}</td><td>${Math.round(m.f)}</td>
+          <td>${Math.round(m.fib)}</td><td>${Math.round(m.sod)}</td>
           <td><button class="del" data-fdel="${i}">×</button></td></tr>`;}).join('')
-        : `<tr><td colspan="9" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
+        : `<tr><td colspan="11" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
       }</tbody></table>
     </div>
     <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">
@@ -914,10 +919,12 @@ function renderNutrition(){
     const p=parseFloat(root.querySelector('#man-p').value)||0;
     const c=parseFloat(root.querySelector('#man-c').value)||0;
     const f=parseFloat(root.querySelector('#man-f').value)||0;
+    const fib=parseFloat(root.querySelector('#man-fib').value)||0;
+    const sod=parseFloat(root.querySelector('#man-sod').value)||0;
     if(!name){ root.querySelector('#man-name').focus(); return; }
-    if(!cal && !p && !c && !f){ alert('Enter at least one macro value.'); return; }
+    if(!cal && !p && !c && !f && !fib && !sod){ alert('Enter at least one value.'); return; }
     if(!DATA.food[day]) DATA.food[day]=[];
-    DATA.food[day].push({desc:name, cal, p, c, f, manual:true, t:stampNow()});   // flat row (no grams scaling)
+    DATA.food[day].push({desc:name, cal, p, c, f, fib, sod, manual:true, t:stampNow()});   // flat row (no grams scaling)
     save(); renderNutrition();
   };
 }
@@ -940,7 +947,7 @@ function shiftDay(s,delta){
 }
 // pull kcal/protein/carb/fat (per 100g) out of a USDA food's nutrient list
 function macrosFromUSDA(fn){
-  let cal=0,p=0,c=0,fat=0;
+  let cal=0,p=0,c=0,fat=0,fib=0,sod=0;
   for(const n of (fn||[])){
     const num=String(n.nutrientNumber||''), name=(n.nutrientName||'').toLowerCase(),
           unit=(n.unitName||'').toLowerCase(), v=n.value||0;
@@ -948,8 +955,10 @@ function macrosFromUSDA(fn){
     else if(num==='203'||name==='protein') p=v;
     else if(num==='204'||name.startsWith('total lipid')) fat=v;
     else if(num==='205'||name.startsWith('carbohydrate, by diff')) c=v;
+    else if(num==='291'||name.startsWith('fiber')) fib=v;            // g
+    else if(num==='307'||name.startsWith('sodium')) sod=v;           // mg
   }
-  return {cal,p,c,f:fat};
+  return {cal,p,c,f:fat,fib,sod};
 }
 function titleCase(s){ return (s||'').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()); }
 let _foodHits = [];
@@ -1024,14 +1033,18 @@ async function addNL(query){
       const g=numOrNull(it.serving_size_g)||100;
       const cnCarb100=numOrNull(it.carbohydrates_total_g)!=null ? numOrNull(it.carbohydrates_total_g)/g*100 : null;
       const cnFat100 =numOrNull(it.fat_total_g)!=null ? numOrNull(it.fat_total_g)/g*100 : null;
+      const cnFib100 =numOrNull(it.fiber_g)!=null ? numOrNull(it.fiber_g)/g*100 : 0;       // free from CalorieNinjas
+      const cnSod100 =numOrNull(it.sodium_mg)!=null ? numOrNull(it.sodium_mg)/g*100 : 0;
       const per100=await usdaPer100(it.name, cnCarb100);   // accurate cal+protein from USDA
       if(per100){
+        if(!per100.fib && cnFib100) per100.fib = cnFib100;   // fill any gap with CalorieNinjas values
+        if(!per100.sod && cnSod100) per100.sod = cnSod100;
         DATA.food[nutDay].push({desc:titleCase(it.name), g:Math.round(g), per100, t:stampNow()});
       } else {
-        // USDA miss/rate-limited — keep CalorieNinjas carbs+fat, mark protein/cal as estimate
+        // USDA miss/rate-limited — keep CalorieNinjas carbs+fat+fiber+sodium, mark protein/cal as estimate
         misses++;
         DATA.food[nutDay].push({desc:titleCase(it.name)+' (est.)', g:Math.round(g),
-          per100:{cal:(cnCarb100||0)*4+(cnFat100||0)*9, p:0, c:cnCarb100||0, f:cnFat100||0}, t:stampNow()});
+          per100:{cal:(cnCarb100||0)*4+(cnFat100||0)*9, p:0, c:cnCarb100||0, f:cnFat100||0, fib:cnFib100, sod:cnSod100}, t:stampNow()});
       }
     }
     save(); renderNutrition();
@@ -1259,6 +1272,8 @@ function openSettings(){
       <div class="field"><label>Protein (g)</label><input class="num" id="g-p" type="number" inputmode="numeric" value="${goals().p}"></div>
       <div class="field"><label>Carbs (g)</label><input class="num" id="g-c" type="number" inputmode="numeric" value="${goals().c}"></div>
       <div class="field"><label>Fat (g)</label><input class="num" id="g-f" type="number" inputmode="numeric" value="${goals().f}"></div>
+      <div class="field"><label>Fiber (g)</label><input class="num" id="g-fib" type="number" inputmode="numeric" value="${goals().fib}"></div>
+      <div class="field"><label>Sodium (mg)</label><input class="num" id="g-sod" type="number" inputmode="numeric" value="${goals().sod}"></div>
     </div>
 
     <button class="btn" id="usda-save">Save</button>
@@ -1272,7 +1287,7 @@ function openSettings(){
     localStorage.setItem(LS_CN, document.getElementById('cn-key').value.trim());
     localStorage.setItem(LS_AI, document.getElementById('ai-key').value.trim());
     const gv = id => { const n=parseFloat(document.getElementById(id).value); return isFinite(n)&&n>=0 ? n : 0; };
-    DATA.goals = {cal:gv('g-cal'), p:gv('g-p'), c:gv('g-c'), f:gv('g-f')};
+    DATA.goals = {cal:gv('g-cal'), p:gv('g-p'), c:gv('g-c'), f:gv('g-f'), fib:gv('g-fib'), sod:gv('g-sod')};
     save();                                  // syncs targets across devices
     document.getElementById('s-overlay').classList.remove('show');
     renderNutrition(); renderBody();
