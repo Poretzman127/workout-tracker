@@ -83,6 +83,11 @@
   .today-sets .set-line.hl-green .so,.today-sets .set-line.hl-yellow .so,.today-sets .set-line.hl-red .so{color:inherit;}
   .opt{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);margin:0 0 12px;cursor:pointer;}
   .opt input{width:auto;}
+  .bc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:6px;}
+  .bc-card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 10px;}
+  .bc-card .tn{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+  .bc-card .tv{font-size:18px;font-weight:800;}
+  .bc-card .tv small{font-size:10px;color:var(--muted);font-weight:600;}
 
   /* modal */
   .overlay{position:fixed;inset:0;background:rgba(4,6,10,.72);backdrop-filter:blur(3px);
@@ -169,6 +174,7 @@
     .charts{grid-template-columns:1fr;}
     .totals{grid-template-columns:repeat(2,1fr);}
     .stat-strip{grid-template-columns:1fr;}
+    .bc-grid{grid-template-columns:repeat(2,1fr);}
     th,td{padding:9px 9px;font-size:12.5px;}
     .sets-cell{max-width:160px;}
     /* Workouts: stack each row as a card so every data point shows without sideways scroll */
@@ -233,6 +239,13 @@ const CN_DEFAULT   = 'lbc1HTZX5PZfBRFmCQVjjm9VaPbQoZmrTwx95gWu';
 const usdaKey = () => (localStorage.getItem(LS_USDA)||'').trim() || USDA_DEFAULT || USDA_DEMO;
 const LS_CN   = 'wt_cnkey';          // optional per-device CalorieNinjas key override
 const cnKey   = () => (localStorage.getItem(LS_CN)||'').trim() || CN_DEFAULT;
+// Anthropic key for in-app body-scan vision. PAID key — set a low ($1/mo) spend cap in the
+// Anthropic console before embedding, since this repo is public. Blank = scanning disabled until
+// a key is pasted in ⚙ Settings. ~$0.003/scan on Haiku.
+const LS_AI   = 'wt_aikey';
+const AI_DEFAULT = '';
+const AI_MODEL   = 'claude-haiku-4-5';
+const aiKey   = () => (localStorage.getItem(LS_AI)||'').trim() || AI_DEFAULT;
 // Daily macro targets — defaults are the FDA Daily Values for a 2,000-calorie diet
 // (https://www.fda.gov/food/nutrition-facts-label). Stored in DATA so they sync across devices.
 const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78, fib:28};
@@ -259,8 +272,27 @@ const METRICS = {
   distance: {name:'Walking Distance', unit:'mi',    dec:2, color:'#22d3ee', hk:'DistanceWalkingRunning'},
 };
 
+// Body-composition metrics from a smart-scale screenshot (Body tab). Order = display order.
+// key → {label, unit, dec}. Weight is kept separately in DATA.body (existing chart/Health import).
+const BODYCOMP = {
+  bf:     {label:'Body Fat',        unit:'%',    dec:1, color:'#ff6b4a'},
+  mm:     {label:'Muscle Mass',     unit:'lb',   dec:1, color:'#34d399'},
+  water:  {label:'Body Water',      unit:'%',    dec:1, color:'#22d3ee'},
+  bmi:    {label:'BMI',             unit:'',     dec:1, color:'#f5c542'},
+  skm:    {label:'Skeletal Muscle', unit:'%',    dec:1, color:'#4ade80'},
+  ffm:    {label:'Fat-Free Mass',   unit:'lb',   dec:1, color:'#7dd3fc'},
+  subfat: {label:'Subcutaneous Fat',unit:'%',    dec:1, color:'#fb923c'},
+  visc:   {label:'Visceral Fat',    unit:'',     dec:0, color:'#f87171'},
+  prot:   {label:'Protein',         unit:'%',    dec:1, color:'#a78bfa'},
+  bone:   {label:'Bone Mass',       unit:'lb',   dec:1, color:'#cbd5e1'},
+  metage: {label:'Metabolic Age',   unit:'yr',   dec:0, color:'#facc15'},
+  bmr:    {label:'BMR',             unit:'kcal', dec:0, color:'#86efac'},
+};
+
 /* ============================== STATE ============================== */
-let DATA = { workouts:{}, food:{}, body:{}, _updated:0 };
+let DATA = { workouts:{}, food:{}, body:{}, comp:{}, _updated:0 };
+let pendingScan = null;            // last screenshot-extracted comp values awaiting review
+let bodyMetric = 'weight';         // which series the Body chart shows
 let nutDay = todayStr();          // active nutrition date
 let pushTimer = null;
 let collapsed = {};               // per-group collapse state (workouts tab)
@@ -1008,29 +1040,67 @@ async function addNL(query){
 }
 
 /* ============================== RENDER: BODY ============================== */
+// "weight" series lives in DATA.body; every body-comp metric lives in DATA.comp[date][key].
+function compDatesFor(key){ return Object.keys(DATA.comp||{}).filter(d=>DATA.comp[d] && DATA.comp[d][key]!=null).sort(); }
+function compSeries(key){ return compDatesFor(key).map(d=>({label:fmtDate(d), value:+DATA.comp[d][key]})); }
+function compLatest(key){ const ds=compDatesFor(key); if(!ds.length) return null; const d=ds[ds.length-1]; return {date:d, value:+DATA.comp[d][key]}; }
+function fmtComp(key, v){ return v==null?'—':(+v).toLocaleString(undefined,{minimumFractionDigits:BODYCOMP[key].dec, maximumFractionDigits:BODYCOMP[key].dec}); }
 function renderBody(){
+  DATA.comp = DATA.comp || {};
   const root = document.getElementById('view-body');
   const dts = sortedDates(DATA.body);
-  const pts = dts.map(d=>({label:fmtDate(d), value:DATA.body[d]}));
   const latest = dts.length?DATA.body[dts[dts.length-1]]:null;
-  const first = dts.length?DATA.body[dts[0]]:null;
-  const change = (latest!=null&&first!=null)?(latest-first):null;
+  const today = todayStr();
+
+  // chart series — weight or a chosen comp metric
+  let pts, chartColor, chartUnit;
+  if(bodyMetric==='weight'){ pts = dts.map(d=>({label:fmtDate(d), value:DATA.body[d]})); chartColor='#34d399'; chartUnit='lb'; }
+  else { pts = compSeries(bodyMetric); chartColor=BODYCOMP[bodyMetric].color; chartUnit=BODYCOMP[bodyMetric].unit; }
+
+  // composition cards (weight + each metric that has data)
+  const wCard = `<div class="bc-card"><div class="tn">Weight</div><div class="tv">${latest!=null?latest.toFixed(1):'—'}<small> lb</small></div></div>`;
+  const compCards = Object.keys(BODYCOMP).map(k=>{
+    const l = compLatest(k); if(!l) return '';
+    return `<div class="bc-card"><div class="tn">${BODYCOMP[k].label}</div><div class="tv">${fmtComp(k,l.value)}<small> ${BODYCOMP[k].unit}</small></div></div>`;
+  }).join('');
+
+  // metric selector for the chart
+  const selOpts = `<option value="weight"${bodyMetric==='weight'?' selected':''}>Weight</option>` +
+    Object.keys(BODYCOMP).map(k=>`<option value="${k}"${bodyMetric===k?' selected':''}>${BODYCOMP[k].label}</option>`).join('');
+
+  // log/review form — prefill from a pending scan, else existing values for the chosen date
+  const cur = DATA.comp[today] || {};
+  const pv = k => pendingScan && pendingScan[k]!=null ? pendingScan[k] : (cur[k]!=null ? cur[k] : '');
+  const wv = pendingScan && pendingScan.weight!=null ? pendingScan.weight : (DATA.body[today]!=null ? DATA.body[today] : '');
+  const compInputs = Object.keys(BODYCOMP).map(k=>
+    `<div class="field"><label>${BODYCOMP[k].label}${BODYCOMP[k].unit?' ('+BODYCOMP[k].unit+')':''}</label>
+      <input class="num bc-in" data-k="${k}" type="number" step="any" inputmode="decimal" value="${pv(k)}"></div>`).join('');
+
   root.innerHTML = `
-    <div class="stat-strip">
-      <div class="tcard"><div class="tn">Current</div><div class="tv">${latest!=null?latest.toFixed(1):'—'}<small style="font-size:11px"> lb</small></div></div>
-      <div class="tcard"><div class="tn">Entries</div><div class="tv">${dts.length}</div></div>
-      <div class="tcard"><div class="tn">Net change</div><div class="tv" style="color:${change==null?'var(--txt)':change<=0?'var(--accent)':'var(--hot)'}">${change==null?'—':(change>0?'+':'')+change.toFixed(1)}</div></div>
-    </div>
-    <div class="bigchart">${pts.length?bigLine(pts,'#34d399'):'<div class="empty">No weight data yet. Add an entry or upload your Apple Health export below.</div>'}</div>
+    <div class="bc-grid">${wCard}${compCards || ''}</div>
 
-    <div class="block-title">Add today's weight</div>
-    <div class="field-row" style="margin-bottom:18px">
-      <div class="field"><label>Date</label><input id="b-date" type="date" value="${todayStr()}"></div>
-      <div class="field"><label>Weight (lb)</label><input class="num" id="b-w" type="number" step="any" inputmode="decimal" placeholder="178.4"></div>
-      <button class="btn" id="b-add">+ Add</button>
+    <div class="block-title" style="display:flex;align-items:center;gap:8px">
+      <span>Trend</span>
+      <select id="bc-metric" style="margin-left:auto;padding:4px 8px;font-size:12px">${selOpts}</select>
+    </div>
+    <div class="bigchart">${pts.length?bigLine(pts,chartColor):`<div class="empty">No ${bodyMetric==='weight'?'weight':BODYCOMP[bodyMetric].label} data yet.</div>`}</div>
+
+    <div class="uploader" style="margin-top:18px">
+      <div style="font-size:15px;font-weight:700">📷 Scan a body-composition screenshot</div>
+      <p>Upload a screenshot of your smart-scale app and I'll read the numbers into the form below — then check &amp; Save.
+         ${aiKey()?'':'<b>Add an Anthropic API key in ⚙ Settings to enable scanning.</b>'}</p>
+      <input type="file" id="bc-file" accept="image/*" ${aiKey()?'':'disabled'}>
+      <div id="bc-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
     </div>
 
-    <div class="uploader">
+    <div class="block-title" style="margin-top:18px">Log body data for <input id="bc-date" type="date" value="${today}" style="padding:4px 8px;font-size:13px"></div>
+    <div class="field-row">
+      <div class="field"><label>Weight (lb)</label><input class="num" id="bc-weight" type="number" step="any" inputmode="decimal" value="${wv}" placeholder="182.0"></div>
+      ${compInputs}
+    </div>
+    <button class="btn" id="bc-save" style="margin-top:6px">💾 Save body data</button>
+
+    <div class="uploader" style="margin-top:22px">
       <div style="font-size:15px;font-weight:700">⬆ Import Apple Health data</div>
       <p>Health app → your profile → <b>Export All Health Data</b> → unzip → upload the <b>export.xml</b> here.<br>
          I'll pull weight (one per day) plus daily steps &amp; walking distance on/after the date below. Big files are fine — it streams.</p>
@@ -1038,13 +1108,55 @@ function renderBody(){
       <input type="file" id="b-file" accept=".xml">
       <div id="b-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
     </div>`;
-  root.querySelector('#b-add').onclick = ()=>{
-    const d = document.getElementById('b-date').value;
-    const v = parseFloat(document.getElementById('b-w').value);
-    if(!d||isNaN(v)) return;
-    DATA.body[d]=v; save(); renderBody();
+
+  root.querySelector('#bc-metric').onchange = e=>{ bodyMetric = e.target.value; renderBody(); };
+  root.querySelector('#bc-file').onchange = e=>{ if(e.target.files[0]) scanBodyScreenshot(e.target.files[0], document.getElementById('bc-status')); };
+  root.querySelector('#bc-save').onclick = ()=>{
+    const d = document.getElementById('bc-date').value; if(!d) return;
+    const wIn = parseFloat(document.getElementById('bc-weight').value);
+    if(!isNaN(wIn)) DATA.body[d] = wIn;
+    const obj = DATA.comp[d] || {};
+    root.querySelectorAll('.bc-in').forEach(inp=>{
+      const k = inp.dataset.k, v = parseFloat(inp.value);
+      if(!isNaN(v)) obj[k] = Math.round(v*100)/100; else delete obj[k];
+    });
+    if(Object.keys(obj).length) DATA.comp[d] = obj; else delete DATA.comp[d];
+    pendingScan = null;
+    save(); renderBody();
   };
   root.querySelector('#b-file').onchange = e=>{ if(e.target.files[0]) importHealth(e.target.files[0], document.getElementById('b-status'), document.getElementById('b-from').value); };
+}
+function fileToDataURL(file){ return new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(file); }); }
+function parseJsonLoose(t){ try{ return JSON.parse(t); }catch(e){} const m=t&&t.match(/\{[\s\S]*\}/); if(m){ try{ return JSON.parse(m[0]); }catch(e){} } return null; }
+// send the screenshot to Claude vision, get back a JSON of metrics, prefill the form for review
+async function scanBodyScreenshot(file, statusEl){
+  const key = aiKey();
+  if(!key){ statusEl.innerHTML = 'Add an Anthropic API key in ⚙ Settings first.'; return; }
+  statusEl.innerHTML = '<span class="spin"></span> Reading screenshot…';
+  try{
+    const durl = await fileToDataURL(file);
+    const media = durl.slice(5, durl.indexOf(';')) || 'image/jpeg';
+    const data  = durl.slice(durl.indexOf(',')+1);
+    const prompt = 'This is a screenshot from a body-composition smart-scale app. Read every metric shown and return ONLY a JSON object (no prose, no code fence). Use these keys when the value is present, omit any you cannot read, values as plain numbers: '+
+      'weight (lb), bmi, ffm (fat-free mass lb), bf (body fat %), subfat (subcutaneous fat %), visc (visceral fat number), skm (skeletal muscle %), mm (muscle mass lb), prot (protein %), bone (bone mass lb), water (body water %), metage (metabolic age years), bmr (kcal).';
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body: JSON.stringify({ model:AI_MODEL, max_tokens:500, messages:[{role:'user', content:[
+        {type:'image', source:{type:'base64', media_type:media, data}},
+        {type:'text', text:prompt}
+      ]}]})
+    });
+    if(!r.ok){ const t=await r.text().catch(()=> ''); statusEl.innerHTML = `Scan failed (${r.status}). ${t.slice(0,140)}`; return; }
+    const j = await r.json();
+    const txt = (j.content && j.content[0] && j.content[0].text) || '';
+    const parsed = parseJsonLoose(txt);
+    if(!parsed){ statusEl.innerHTML = 'Could not read numbers from that image — try a clearer shot or type them in.'; return; }
+    pendingScan = parsed;
+    renderBody();
+    const n = Object.keys(parsed).length;
+    document.getElementById('bc-status').innerHTML = `Read ${n} value${n===1?'':'s'} ✓ — check the form below and Save.`;
+  }catch(e){ statusEl.innerHTML = 'Scan error: '+e.message; }
 }
 // stream-parse export.xml for weight + daily steps + walking distance (memory-safe for huge files).
 // Weight = one reading/day (last wins); steps & distance = SUM of the day's readings.
@@ -1119,9 +1231,15 @@ async function importHealth(file, statusEl, fromDate){
 function openSettings(){
   const key = localStorage.getItem(LS_USDA)||'';
   const ck  = localStorage.getItem(LS_CN)||'';
+  const ak  = localStorage.getItem(LS_AI)||'';
   const m = document.getElementById('s-modal');
   m.innerHTML = `
     <div class="modal-head"><h3>Settings</h3><button class="x" id="s-close">×</button></div>
+    <div class="block-title">Body-scan AI key</div>
+    <div class="modal-sub">Paste an <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic API key</a>
+      to enable photo-scanning of body-composition screenshots on the Body tab. <b>Set a low spend limit ($1/mo)</b>
+      on the key first — scans cost ~$0.003 each. Leave blank to disable scanning (you can still type values by hand).</div>
+    <div class="field" style="margin-bottom:16px"><label>Anthropic API key</label><input id="ai-key" value="${ak}" placeholder="sk-ant-… (blank = scanning off)"></div>
     <div class="block-title">Food lookup keys</div>
     <div class="modal-sub">Plain-language food entry is <b>already set up</b> — the keys are built into the app, so it
       works on every device with no setup needed. The boxes below are only if you ever want to use your <i>own</i>
@@ -1149,11 +1267,12 @@ function openSettings(){
   m.querySelector('#usda-save').onclick = ()=>{
     localStorage.setItem(LS_USDA, document.getElementById('usda-key').value.trim());
     localStorage.setItem(LS_CN, document.getElementById('cn-key').value.trim());
+    localStorage.setItem(LS_AI, document.getElementById('ai-key').value.trim());
     const gv = id => { const n=parseFloat(document.getElementById(id).value); return isFinite(n)&&n>=0 ? n : 0; };
     DATA.goals = {cal:gv('g-cal'), p:gv('g-p'), c:gv('g-c'), f:gv('g-f')};
     save();                                  // syncs targets across devices
     document.getElementById('s-overlay').classList.remove('show');
-    renderNutrition();
+    renderNutrition(); renderBody();
   };
   m.querySelector('#export-json').onclick = ()=>{
     const blob = new Blob([JSON.stringify(DATA,null,2)],{type:'application/json'});
