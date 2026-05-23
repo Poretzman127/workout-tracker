@@ -814,6 +814,8 @@ function foodMacros(r){
 }
 // servings multiplier on top of the base macros (default 1 serving)
 function rowMacros(r){ const m=foodMacros(r), s=r.servings||1; return {cal:m.cal*s, p:m.p*s, c:m.c*s, f:m.f*s}; }
+// timestamp a food only when logging for TODAY (back-dated entries get no time)
+function stampNow(){ return nutDay===todayStr() ? Date.now() : undefined; }
 function renderNutrition(){
   const root = document.getElementById('view-nutrition');
   const day = nutDay;
@@ -915,7 +917,7 @@ function renderNutrition(){
     if(!name){ root.querySelector('#man-name').focus(); return; }
     if(!cal && !p && !c && !f){ alert('Enter at least one macro value.'); return; }
     if(!DATA.food[day]) DATA.food[day]=[];
-    DATA.food[day].push({desc:name, cal, p, c, f, manual:true, t:Date.now()});   // flat row (no grams scaling)
+    DATA.food[day].push({desc:name, cal, p, c, f, manual:true, t:stampNow()});   // flat row (no grams scaling)
     save(); renderNutrition();
   };
 }
@@ -974,7 +976,7 @@ async function searchFood(query){
     box.querySelectorAll('[data-pick]').forEach(it=> it.onclick=()=>{
       const h=_foodHits[+it.dataset.pick]; if(!h) return;
       if(!DATA.food[nutDay]) DATA.food[nutDay]=[];
-      DATA.food[nutDay].push({desc:h.desc, g:100, per100:h.per100, t:Date.now()});
+      DATA.food[nutDay].push({desc:h.desc, g:100, per100:h.per100, t:stampNow()});
       save(); renderNutrition();
     });
   }catch(e){
@@ -1024,12 +1026,12 @@ async function addNL(query){
       const cnFat100 =numOrNull(it.fat_total_g)!=null ? numOrNull(it.fat_total_g)/g*100 : null;
       const per100=await usdaPer100(it.name, cnCarb100);   // accurate cal+protein from USDA
       if(per100){
-        DATA.food[nutDay].push({desc:titleCase(it.name), g:Math.round(g), per100, t:Date.now()});
+        DATA.food[nutDay].push({desc:titleCase(it.name), g:Math.round(g), per100, t:stampNow()});
       } else {
         // USDA miss/rate-limited — keep CalorieNinjas carbs+fat, mark protein/cal as estimate
         misses++;
         DATA.food[nutDay].push({desc:titleCase(it.name)+' (est.)', g:Math.round(g),
-          per100:{cal:(cnCarb100||0)*4+(cnFat100||0)*9, p:0, c:cnCarb100||0, f:cnFat100||0}, t:Date.now()});
+          per100:{cal:(cnCarb100||0)*4+(cnFat100||0)*9, p:0, c:cnCarb100||0, f:cnFat100||0}, t:stampNow()});
       }
     }
     save(); renderNutrition();
