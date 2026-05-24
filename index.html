@@ -186,6 +186,24 @@
   .uploader p{margin:6px 0;color:var(--muted);font-size:13px;}
   .stat-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
 
+  /* Nureli hype tab */
+  .nureli-stage{position:relative;min-height:74vh;border-radius:16px;overflow:hidden;
+    background:radial-gradient(circle at 50% 28%,#1b2440,#070a12 72%);
+    display:flex;align-items:center;justify-content:center;}
+  #fw{position:absolute;inset:0;width:100%;height:100%;}
+  .nureli-content{position:relative;z-index:2;text-align:center;padding:20px;}
+  .nureli-title{font-weight:900;letter-spacing:1px;line-height:1.05;font-size:clamp(34px,9vw,78px);
+    background:linear-gradient(90deg,#ffd24a,#ff5e5e,#c98bff,#5ec8ff,#5eff8f,#ffd24a);
+    background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:nrShift 6s linear infinite, nrPulse 1.6s ease-in-out infinite;}
+  @keyframes nrShift{to{background-position:300% 0;}}
+  @keyframes nrPulse{50%{transform:scale(1.05);}}
+  .nureli-sub{margin-top:10px;color:#ffd24a;font-weight:700;letter-spacing:3px;text-transform:uppercase;
+    font-size:clamp(13px,3.5vw,20px);}
+  .nureli-emojis{margin-top:18px;font-size:clamp(28px,8vw,56px);letter-spacing:4px;animation:nrBob 2s ease-in-out infinite;}
+  .nureli-emojis2{margin-top:6px;font-size:clamp(24px,7vw,48px);letter-spacing:6px;animation:nrBob 2.4s ease-in-out infinite reverse;}
+  @keyframes nrBob{50%{transform:translateY(-9px);}}
+
   @media(max-width:768px){
     .page{padding:0 12px 50px;} header{padding:16px 12px 6px;}
     .tab-bar{padding:0 12px;}
@@ -225,12 +243,14 @@
   <button class="tab active" data-view="workouts">🏋️ Workouts</button>
   <button class="tab" data-view="nutrition">🍽️ Nutrition</button>
   <button class="tab" data-view="body">⚖️ Body</button>
+  <button class="tab" data-view="nureli">🔥 Nureli</button>
 </div>
 
 <div class="page">
   <div class="view active" id="view-workouts"></div>
   <div class="view" id="view-nutrition"></div>
   <div class="view" id="view-body"></div>
+  <div class="view" id="view-nureli"></div>
 </div>
 
 <!-- workout modal -->
@@ -1502,6 +1522,49 @@ function openSettings(){
   document.getElementById('s-overlay').classList.add('show');
 }
 
+/* ============================== NURELI (hype tab) ============================== */
+// Static celebratory tab: canvas fireworks + glowing banner + emoji crew. Set up once;
+// the animation loop only does work while its tab is visible (saves battery elsewhere).
+function setupNureli(){
+  const root = document.getElementById('view-nureli');
+  if(!root || root.dataset.ready) return;
+  root.dataset.ready = '1';
+  root.innerHTML = `
+    <div class="nureli-stage">
+      <canvas id="fw"></canvas>
+      <div class="nureli-content">
+        <div class="nureli-title">NURELI IS A BOSS</div>
+        <div class="nureli-sub">👑 absolute legend · certified boss 👑</div>
+        <div class="nureli-emojis">💃🔫 🎆 💃🔫 🎆 💃🔫</div>
+        <div class="nureli-emojis2">👙 🔥 👙 🔥 👙</div>
+      </div>
+    </div>`;
+  const cv = document.getElementById('fw'), ctx = cv.getContext('2d');
+  const COLORS = ['#ff5e5e','#ffd24a','#5eff8f','#5ec8ff','#c98bff','#ff8bd0','#ffffff'];
+  let parts = [], W = 1, H = 1;
+  function fit(){ const r = cv.getBoundingClientRect(); W = cv.width = Math.max(1, r.width|0); H = cv.height = Math.max(1, r.height|0); }
+  function boom(x, y){
+    const n = 38 + (Math.random()*34|0), col = COLORS[Math.random()*COLORS.length|0];
+    for(let i=0;i<n;i++){ const a = Math.random()*Math.PI*2, sp = 1 + Math.random()*4.5;
+      parts.push({x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, life:1, col}); }
+  }
+  function frame(){
+    requestAnimationFrame(frame);
+    if(!root.classList.contains('active')) return;          // idle when not on this tab
+    if((cv.getBoundingClientRect().width|0) !== W) fit();
+    ctx.fillStyle = 'rgba(7,10,18,0.22)'; ctx.fillRect(0,0,W,H);   // fade trails
+    if(Math.random() < 0.07) boom(Math.random()*W, Math.random()*H*0.62);
+    for(let i=parts.length-1;i>=0;i--){ const p = parts[i];
+      p.vy += 0.03; p.x += p.vx; p.y += p.vy; p.life -= 0.012;
+      if(p.life <= 0){ parts.splice(i,1); continue; }
+      ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.col; ctx.fillRect(p.x, p.y, 3, 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+  fit(); requestAnimationFrame(frame);
+  window.addEventListener('resize', ()=>{ if(root.classList.contains('active')) fit(); });
+}
+
 /* ============================== WIRING ============================== */
 function renderAll(){ renderWorkouts(); renderNutrition(); renderBody(); }
 
@@ -1539,6 +1602,7 @@ document.addEventListener('visibilitychange', async ()=>{
   }
 });
 
+setupNureli();
 initSync();
 </script>
 </body>
