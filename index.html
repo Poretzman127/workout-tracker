@@ -350,8 +350,9 @@ function isRow(w){ return !!(w && w.row); }
 // timed-hold mode (planks etc.): store r=time(min, from min:sec), w=optional added weight (0=bodyweight)
 function isHold(w){ return !!(w && w.hold); }
 function sessionBestHold(sets){ return (sets||[]).reduce((a,s)=>Math.max(a, s.r||0), 0); }   // longest single hold (min)
-// reps-only mode: Abs exercises (except planks/holds) just count reps — no weight field at all
-function isRepsOnly(w){ return !!(w && w.group==='abs' && !isHold(w)); }
+// reps-only mode: Abs exercises (except planks/holds) just count reps — no weight field at all.
+// Opt back into weight×reps per-exercise with a `weighted` flag (e.g. ab crunch machine).
+function isRepsOnly(w){ return !!(w && w.group==='abs' && !isHold(w) && !w.weighted); }
 function sessionBestReps(sets){ return (sets||[]).reduce((a,s)=>Math.max(a, s.r||0), 0); }    // most reps in a single set
 function workoutOutput(w, sets){ return sessionOutput(sets) * dbMult(w); }
 function sessionDist(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0), 0); }       // meters (rowing)
@@ -701,7 +702,8 @@ function renderModal(){
     ${cardio
       ? `<label class="opt"><input type="checkbox" id="w-row"${row?' checked':''}> Rowing mode — log distance &amp; time, show km/min</label>`
       : `<label class="opt"><input type="checkbox" id="w-hold"${hold?' checked':''}> Timed hold (plank) — log time + optional added weight</label>
-         ${(hold||gid==='abs')?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}`}
+         ${(hold||gid==='abs')?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
+         ${(gid==='abs'&&!hold)?`<label class="opt"><input type="checkbox" id="w-wt"${w.weighted?' checked':''}> Track weight (weight × reps) — for machines/weighted ab work</label>`:''}`}
 
     ${rangeToggle()}
     <div class="charts">
@@ -765,6 +767,7 @@ function renderModal(){
   const dbc = m.querySelector('#w-db'); if(dbc) dbc.onchange=()=>{ w.db=dbc.checked; save(); renderModal(); renderWorkouts(); };
   const rwc = m.querySelector('#w-row'); if(rwc) rwc.onchange=()=>{ w.row=rwc.checked; save(); renderModal(); renderWorkouts(); };
   const hdc = m.querySelector('#w-hold'); if(hdc) hdc.onchange=()=>{ w.hold=hdc.checked; if(w.hold) delete w.db; save(); renderModal(); renderWorkouts(); };
+  const wtc = m.querySelector('#w-wt'); if(wtc) wtc.onchange=()=>{ w.weighted=wtc.checked; save(); renderModal(); renderWorkouts(); };
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
   m.querySelector('#add-set').onclick = ()=>{
     let wv, rv;
