@@ -371,6 +371,17 @@ function setText(w, s){
   if(isRepsOnly(w)) return `${s.r} reps`;
   return w.db ? `${s.r}×${s.w}s` : `${s.r}×${s.w}`;
 }
+// read-only line for a set: {desc, so(output)} — shared by today's list + prior-day view
+function setDescSo(w, s){
+  const cardio=groupKind(w.group)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w);
+  const desc = cardio
+    ? (row ? `${s.w} m in ${fmtDur(s.r)}` : `${s.r} min @ level ${s.w}`)
+    : hold ? `${fmtDur(s.r)} hold${s.w?` · ${s.w} lb`:''}`
+    : repsOnly ? `${s.r} reps`
+    : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
+  const so = row ? `${fmtPace(pace(s))} km/min` : (hold||repsOnly) ? '' : (s.w*s.r*dbMult(w)).toLocaleString();
+  return {desc, so};
+}
 // progression highlight for a lift's latest set vs the one before it (same day)
 function setHighlight(w, sets){
   if(!sets || sets.length<2 || groupKind(w.group)==='cardio' || isMetric(w) || isHold(w) || isRepsOnly(w)) return '';
@@ -647,7 +658,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d', editToday = false;
+let modalName = null, modalPriorDate = null, modalRange = '7d', editToday = false, editPrior = false;
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
 const RANGE_LABEL = {'7d':'7D', '15d':'15D', '30d':'30D', '1y':'1Y', 'all':'All'};
@@ -663,7 +674,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d'; editToday = false;   // default each open to 7 days, view mode
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editToday = false; editPrior = false;   // default each open to 7 days, view mode
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -741,12 +752,7 @@ function renderModal(){
         ? editableSets(w, today)
         : todaySets.map((s,i)=>{
             const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
-            const desc = cardio
-              ? (row ? `${s.w} m in ${fmtDur(s.r)}` : `${s.r} min @ level ${s.w}`)
-              : hold ? `${fmtDur(s.r)} hold${s.w?` · ${s.w} lb`:''}`
-              : repsOnly ? `${s.r} reps`
-              : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
-            const so = row ? `${fmtPace(pace(s))} km/min` : (hold||repsOnly) ? '' : (s.w*s.r*dbMult(w)).toLocaleString();
+            const {desc,so} = setDescSo(w, s);
             return `<div class="set-line${hl?' '+hl:''}">
             <span>${desc}</span>
             <span class="so">${so}</span>
@@ -798,8 +804,10 @@ function renderModal(){
   });
   m.querySelectorAll('[data-prior]').forEach(c=> c.onclick=()=>{
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
+    editPrior = false;            // open a prior day read-only; Edit button expands it
     renderModal();
   });
+  const ep = m.querySelector('#edit-prior'); if(ep) ep.onclick=()=>{ editPrior=!editPrior; renderModal(); };
   // editable set rows for today (edit mode) and the open prior day — both scoped by data-editdate
   wireSetEditors(m, w);
 }
@@ -932,10 +940,25 @@ function priorDetailHtml(name){
     : repsOnly ? `${fmtDateLong(modalPriorDate)} · ${sessionReps(sets)} reps`
     : cardio ? `${fmtDateLong(modalPriorDate)}`
     : `${fmtDateLong(modalPriorDate)} · output ${workoutOutput(w, sets).toLocaleString()}`;
+  if(editPrior){
+    return `<div class="prior-edit">
+      <div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:4px">
+        <span>${head}</span>
+        <button class="btn ghost mini" id="edit-prior" style="margin-left:auto">✓ Done</button></div>
+      <div class="modal-sub" style="margin:-2px 0 8px">Edit the numbers below — the date stays ${fmtDate(modalPriorDate)}.</div>
+      ${editableSets(w, modalPriorDate)}
+    </div>`;
+  }
+  // read-only by default: show reps / weight / output; Edit button expands the editor
+  const list = sets.length
+    ? sets.map(s=>{ const {desc,so}=setDescSo(w,s);
+        return `<div class="set-line"><span>${desc}</span><span class="so">${so}</span></div>`; }).join('')
+    : '<div class="muted" style="font-size:13px">No sets on this day.</div>';
   return `<div class="prior-edit">
-    <div class="block-title" style="margin-top:4px">${head}</div>
-    <div class="modal-sub" style="margin:-2px 0 8px">Edit the numbers below — the date stays ${fmtDate(modalPriorDate)}.</div>
-    ${editableSets(w, modalPriorDate)}
+    <div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:4px">
+      <span>${head}</span>
+      ${sets.length?`<button class="btn ghost mini" id="edit-prior" style="margin-left:auto">✎ Edit</button>`:''}</div>
+    <div class="today-sets">${list}</div>
   </div>`;
 }
 function renameWorkout(name){
