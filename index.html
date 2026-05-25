@@ -48,11 +48,14 @@
   .view{display:none;} .view.active{display:block;}
 
   .section{margin-bottom:26px;}
-  .section-head{display:flex;align-items:center;gap:10px;margin:0 0 8px;cursor:pointer;user-select:none;}
+  .section-head{display:flex;align-items:center;gap:10px;margin:0 0 8px;cursor:pointer;user-select:none;flex-wrap:wrap;}
   .section-head .caret{color:var(--muted);font-size:11px;width:10px;text-align:center;}
   .section-head h2{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px;}
   .section-head .pill{font-size:11px;color:var(--muted);background:var(--panel2);
     border:1px solid var(--line);padding:2px 8px;border-radius:999px;}
+  .section-head .sec-date{font-size:11px;font-weight:600;color:var(--accent2);background:var(--panel2);
+    border:1px solid var(--line);padding:2px 8px;border-radius:999px;white-space:nowrap;}
+  .section-head .sec-date.none{color:var(--muted);font-weight:400;}
   .btn{background:var(--accent);color:#062014;border:none;border-radius:8px;
     padding:7px 13px;font-size:13px;font-weight:700;cursor:pointer;}
   .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);}
@@ -565,6 +568,18 @@ function bigLine(points, color){
 }
 
 /* ============================== RENDER: WORKOUTS ============================== */
+// Most recent session date across a group's exercises (skips daily metrics like Steps so
+// the header shows the last actual workout). Returns 'YYYY-MM-DD' or null.
+function groupLastDate(gid){
+  let best = null;
+  for(const name in DATA.workouts){
+    const w = DATA.workouts[name];
+    if(w.group!==gid || isMetric(w)) continue;
+    const dts = sortedDates(w.sessions);
+    if(dts.length){ const d = dts[dts.length-1]; if(!best || d>best) best = d; }
+  }
+  return best;
+}
 function workoutsByGroup(gid){
   return Object.keys(DATA.workouts)
     .filter(n=>DATA.workouts[n].group===gid)
@@ -589,10 +604,12 @@ function renderWorkouts(){
   for(const g of GROUPS){
     const names = workoutsByGroup(g.id);
     const cardio = g.kind==='cardio';
+    const lastD = groupLastDate(g.id);
     const sec = el(`<div class="section"></div>`);
     sec.appendChild(el(`<div class="section-head" data-toggle="${g.id}">
       <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
+      <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
       <button class="btn ghost sm add-row" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>
     </div>`));
     const body = el(`<div class="section-body"${collapsed[g.id]?' style="display:none"':''}></div>`);
