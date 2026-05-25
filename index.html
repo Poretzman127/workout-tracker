@@ -192,11 +192,11 @@
   /* Nureli hype tab */
   .nureli-stage{position:relative;min-height:74vh;border-radius:16px;overflow:hidden;
     background:#070a12 url('nureli-bg.jpg') center/cover no-repeat;
-    display:flex;align-items:center;justify-content:center;}
+    display:flex;align-items:flex-start;justify-content:center;}
   .nureli-stage::before{content:'';position:absolute;inset:0;z-index:0;
-    background:radial-gradient(ellipse at 50% 45%,rgba(7,10,18,.62),rgba(7,10,18,.22) 62%);}
+    background:linear-gradient(to bottom,rgba(7,10,18,.55) 0%,rgba(7,10,18,.2) 26%,rgba(7,10,18,0) 48%);}
   #fw{position:absolute;inset:0;width:100%;height:100%;z-index:1;}
-  .nureli-content{position:relative;z-index:2;text-align:center;padding:20px;}
+  .nureli-content{position:relative;z-index:2;text-align:center;padding:clamp(24px,6vh,64px) 20px 20px;}
   .nureli-title{font-weight:900;letter-spacing:1px;line-height:1.05;font-size:clamp(34px,9vw,78px);
     background:linear-gradient(90deg,#ffd24a,#ff5e5e,#c98bff,#5ec8ff,#5eff8f,#ffd24a);
     background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
@@ -1555,8 +1555,6 @@ function setupNureli(){
       <div class="nureli-content">
         <div class="nureli-title">NURELI IS A BOSS</div>
         <div class="nureli-sub">👑 absolute legend · certified boss 👑</div>
-        <div class="nureli-emojis">💃🔫 🎆 💃🔫 🎆 💃🔫</div>
-        <div class="nureli-emojis2">👙 🔥 👙 🔥 👙</div>
       </div>
     </div>`;
   const cv = document.getElementById('fw'), ctx = cv.getContext('2d');
