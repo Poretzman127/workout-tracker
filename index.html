@@ -155,6 +155,16 @@
   .day-nav .arrow{background:var(--panel2);border:1px solid var(--line);color:var(--txt);
     border-radius:8px;width:34px;height:34px;font-size:16px;cursor:pointer;}
   .day-nav .date{font-weight:700;font-size:15px;}
+  .burn-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0 0;
+    background:linear-gradient(90deg,rgba(255,107,74,.16),rgba(255,107,74,.04));
+    border:1px solid rgba(255,107,74,.35);border-radius:10px;padding:9px 12px;}
+  .burn-bar.empty{background:var(--panel);border-color:var(--line);opacity:.8;}
+  .burn-bar .bb-fire{font-size:18px;line-height:1;}
+  .burn-bar .bb-main{font-size:13px;color:var(--txt);}
+  .burn-bar .bb-val{font-size:19px;font-weight:800;color:var(--hot);}
+  .burn-bar .bb-sub{font-size:11.5px;color:var(--muted);}
+  .burn-bar .bb-net{margin-left:auto;font-size:12px;font-weight:700;color:var(--txt);
+    background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:3px 9px;}
   .totals{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 16px;}
   .tcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center;}
   .tcard .tn{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
@@ -215,6 +225,8 @@
     .tab-bar{padding:0 12px;}
     .charts{grid-template-columns:1fr;}
     .totals{grid-template-columns:repeat(2,1fr);}
+    .burn-bar .bb-sub{width:100%;order:3;}
+    .burn-bar .bb-net{order:2;}
     .stat-strip{grid-template-columns:1fr;}
     .bc-grid{grid-template-columns:repeat(2,1fr);}
     th,td{padding:9px 9px;font-size:12.5px;}
@@ -422,6 +434,59 @@ function groupKind(gid){ return (GROUPS.find(g=>g.id===gid)||{}).kind; }
 function isMetric(w){ return !!(w && w.metric); }
 function metricInfo(w){ return METRICS[w.metric]; }
 function fmtMetricVal(w, v){ return v==null?'—':(+v).toLocaleString(undefined,{maximumFractionDigits:metricInfo(w).dec}); }
+
+// ── Calorie burn ──────────────────────────────────────────────────────────────
+// Strength: cal ≈ 0.035 × total weight moved (lb) + 0.1 × bodyweight (lb) × hours.
+//   The 0.1·bw·hours term is the time-on-feet cost — applied ONCE per day over the whole
+//   gym session (first→last lift timestamp), NOT per exercise, so it isn't multiplied up.
+// Cardio: MET formula → cal = MET × bodyweight (kg) × hours, using the logged minutes.
+const DEFAULT_BW = 182;                       // lb, fallback if no body weight logged
+// body weight as of a given date: most recent reading on or before it
+function bwOn(date){
+  const dts=sortedDates(DATA.body); if(!dts.length) return DEFAULT_BW;
+  let bw=DATA.body[dts[0]];
+  for(const d of dts){ if(d<=date) bw=DATA.body[d]; else break; }
+  return bw;
+}
+// rough MET by cardio exercise name (keyword match), generic 7 if unknown
+function cardioMET(name){
+  const n=(name||'').toLowerCase();
+  if(/jump ?rope|skipping/.test(n)) return 11;
+  if(/treadmill|run|jog|sprint/.test(n)) return 9;
+  if(/stair|step ?mill|stairmaster/.test(n)) return 9;
+  if(/swim/.test(n)) return 8;
+  if(/row/.test(n)) return 7;
+  if(/bike|cycl|spin/.test(n)) return 7;
+  if(/elliptical/.test(n)) return 5;
+  if(/walk/.test(n)) return 3.8;
+  return 7;
+}
+// total calories burned across every workout logged on `date`
+function dayBurn(date){
+  const bwLb=bwOn(date), bwKg=bwLb/2.205;
+  let weightMoved=0, liftSets=0, tMin=Infinity, tMax=-Infinity, nLift=0;
+  let cardioCal=0, cardioMin=0, nCardio=0;
+  for(const name in (DATA.workouts||{})){
+    const w=DATA.workouts[name];
+    if(isMetric(w)) continue;                 // skip daily Steps/Walking-Distance totals
+    const sets=w.sessions && w.sessions[date];
+    if(!Array.isArray(sets) || !sets.length) continue;
+    if(groupKind(w.group)==='cardio'){
+      const min=sessionReps(sets);            // r = minutes (rowing r = decimal min)
+      if(min>0){ cardioCal += cardioMET(name)*bwKg*(min/60); cardioMin+=min; nCardio++; }
+    } else {
+      weightMoved += workoutOutput(w, sets);
+      liftSets += sets.length; nLift++;
+      const ts=sets.map(s=>s.t).filter(Boolean);
+      if(ts.length){ tMin=Math.min(tMin,...ts); tMax=Math.max(tMax,...ts); }
+    }
+  }
+  // strength session duration (min): real span if ≥2 timestamps, else ~3 min/set
+  let liftMin = (tMax>tMin) ? (tMax-tMin)/60000 : liftSets*3;
+  const strengthCal = nLift ? (0.035*weightMoved + 0.1*bwLb*(liftMin/60)) : 0;
+  return {total:strengthCal+cardioCal, strength:strengthCal, cardio:cardioCal,
+          nLift, nCardio, liftMin, cardioMin, weightMoved, bw:bwLb};
+}
 function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }
 
 /* ============================== SYNC ============================== */
@@ -1052,12 +1117,14 @@ function renderNutrition(){
   const day = nutDay;
   const rows = DATA.food[day] || [];
   const tot = rows.reduce((a,r)=>{const m=rowMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f,fib:a.fib+m.fib,sod:a.sod+m.sod};},{cal:0,p:0,c:0,f:0,fib:0,sod:0});
+  const burn = dayBurn(day);
   root.innerHTML = `
     <div class="day-nav">
       <button class="arrow" id="d-prev">‹</button>
       <span class="date" id="d-label">${fmtDateLong(day)}${day===todayStr()?' · Today':''}</span>
       <button class="arrow" id="d-next">›</button>
     </div>
+    ${burnBarHtml(burn, tot)}
     <div class="totals">
       <div class="tcard cal"><div class="tn">Calories</div><div class="tv">${Math.round(tot.cal)}</div>${goalLine(tot.cal, goals().cal, false, '')}</div>
       <div class="tcard p"><div class="tn">Protein</div><div class="tv">${Math.round(tot.p)}<small style="font-size:11px">g</small></div>${goalLine(tot.p, goals().p, true, 'g')}</div>
@@ -1169,6 +1236,20 @@ function goalLine(value, target, isProtein, unit){
   return v>t
     ? `<div class="goal over">${v-t}${u} over · ${t}${u}</div>`
     : `<div class="goal">${t-v}${u} left · ${t}${u}</div>`;
+}
+// daily workout-burn bar shown under the date nav in the Nutrition tab
+function burnBarHtml(b, tot){
+  if(!b.nLift && !b.nCardio)
+    return `<div class="burn-bar empty"><span class="bb-fire">🔥</span>
+      <div class="bb-main"><span class="bb-val">0</span> cal · no workout logged</div></div>`;
+  const parts=[];
+  if(b.nLift)   parts.push(`${b.nLift} lift${b.nLift>1?'s':''} · ${Math.round(b.liftMin)} min`);
+  if(b.nCardio) parts.push(`${b.nCardio} cardio · ${Math.round(b.cardioMin)} min`);
+  const net = tot.cal>0
+    ? `<div class="bb-net" title="calories eaten − burned">Net ${Math.round(tot.cal - b.total)} cal</div>` : '';
+  return `<div class="burn-bar"><span class="bb-fire">🔥</span>
+    <div class="bb-main"><span class="bb-val">${Math.round(b.total)}</span> cal burned</div>
+    <div class="bb-sub">${parts.join(' · ')}</div>${net}</div>`;
 }
 function shiftDay(s,delta){
   const [y,m,d]=s.split('-').map(Number);
