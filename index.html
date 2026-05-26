@@ -678,7 +678,7 @@ function renderWorkouts(){
       <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
       <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
-      <button class="btn ghost sm add-row" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>
+      ${collapsed[g.id]?'':`<button class="btn ghost sm add-row" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>`}
     </div>`));
     const body = el(`<div class="section-body"${collapsed[g.id]?' style="display:none"':''}></div>`);
     const wrap = el(`<div class="table-wrap"></div>`);
