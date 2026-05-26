@@ -466,9 +466,17 @@ function dayBurn(date){
   const bwLb=bwOn(date), bwKg=bwLb/2.205;
   let weightMoved=0, liftSets=0, tMin=Infinity, tMax=-Infinity, nLift=0;
   let cardioCal=0, cardioMin=0, nCardio=0;
+  let distV=null, stepV=null;                 // daily Apple-Health metrics
   for(const name in (DATA.workouts||{})){
     const w=DATA.workouts[name];
-    if(isMetric(w)) continue;                 // skip daily Steps/Walking-Distance totals
+    if(isMetric(w)){
+      const v = w.sessions && w.sessions[date];
+      if(typeof v === 'number'){
+        if(w.metric==='distance') distV=v;    // miles
+        else if(w.metric==='steps') stepV=v;  // step count
+      }
+      continue;
+    }
     const sets=w.sessions && w.sessions[date];
     if(!Array.isArray(sets) || !sets.length) continue;
     if(groupKind(w.group)==='cardio'){
@@ -484,8 +492,15 @@ function dayBurn(date){
   // strength session duration (min): real span if ≥2 timestamps, else ~3 min/set
   let liftMin = (tMax>tMin) ? (tMax-tMin)/60000 : liftSets*3;
   const strengthCal = nLift ? (0.035*weightMoved + 0.1*bwLb*(liftMin/60)) : 0;
-  return {total:strengthCal+cardioCal, strength:strengthCal, cardio:cardioCal,
-          nLift, nCardio, liftMin, cardioMin, weightMoved, bw:bwLb};
+  // walking burn: prefer real miles; fall back to steps÷2000 only if no distance.
+  // 0.53 × bw(lb) × mi ≡ MET 3.5 walking. ⚠ can overlap with treadmill cardio sessions.
+  const miles = (distV!=null && distV>0) ? distV
+              : (stepV!=null && stepV>0) ? stepV/2000 : 0;
+  const walkCal = 0.53 * bwLb * miles;
+  return {total:strengthCal+cardioCal+walkCal,
+          strength:strengthCal, cardio:cardioCal, walk:walkCal,
+          nLift, nCardio, liftMin, cardioMin, miles, steps:stepV||0,
+          weightMoved, bw:bwLb};
 }
 function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }
 
@@ -1239,12 +1254,13 @@ function goalLine(value, target, isProtein, unit){
 }
 // daily workout-burn bar shown under the date nav in the Nutrition tab
 function burnBarHtml(b, tot){
-  if(!b.nLift && !b.nCardio)
+  if(!b.nLift && !b.nCardio && !b.miles)
     return `<div class="burn-bar empty"><span class="bb-fire">🔥</span>
       <div class="bb-main"><span class="bb-val">0</span> cal · no workout logged</div></div>`;
   const parts=[];
   if(b.nLift)   parts.push(`${b.nLift} lift${b.nLift>1?'s':''} · ${Math.round(b.liftMin)} min`);
   if(b.nCardio) parts.push(`${b.nCardio} cardio · ${Math.round(b.cardioMin)} min`);
+  if(b.miles)   parts.push(`${b.miles.toFixed(1)} mi walked`);
   const net = tot.cal>0
     ? `<div class="bb-net" title="calories eaten − burned">Net ${Math.round(tot.cal - b.total)} cal</div>` : '';
   return `<div class="burn-bar"><span class="bb-fire">🔥</span>
