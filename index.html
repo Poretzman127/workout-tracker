@@ -319,7 +319,7 @@ const SEED = {
   'chest-tricep':['Barbell Bench Press','Incline Dumbbell Press','Machine Chest Fly','Tricep Pushdown','Overhead Tricep Extension','Dips'],
   'legs':        ['Back Squat','Leg Press','Romanian Deadlift','Leg Extension','Seated Leg Curl','Calf Raise'],
   'abs':         ['Cable Crunch','Hanging Leg Raise','Plank','Russian Twist','Bicycle Crunch','Ab Wheel Rollout','Decline Sit-Up'],
-  'cardio':      ['Treadmill','Stationary Bike','Rowing Machine','Elliptical','Stairmaster'],
+  'cardio':      ['Treadmill','Stationary Bike','Rowing Machine','Elliptical','Stairmaster','Volleyball'],
 };
 const demoUrl = name => `https://www.youtube.com/results?search_query=${encodeURIComponent(name+' proper form')}`;
 
@@ -385,6 +385,8 @@ function sessionReps(sets){ return (sets||[]).reduce((a,s)=>a + (s.r||0), 0); }
 // dumbbell = two separate weights → double the volume. rowing stores w=distance(km), r=time(min); pace=km/min, no output.
 function dbMult(w){ return (w && w.db) ? 2 : 1; }
 function isRow(w){ return !!(w && w.row); }
+// time-only cardio (sports like volleyball/basketball): just log minutes, no speed/level
+function isTimeOnly(w){ return !!(w && w.timeOnly && groupKind(w.group)==='cardio'); }
 // timed-hold mode (planks etc.): store r=time(min, from min:sec), w=optional added weight (0=bodyweight)
 function isHold(w){ return !!(w && w.hold); }
 function sessionBestHold(sets){ return (sets||[]).reduce((a,s)=>Math.max(a, s.r||0), 0); }   // longest single hold (min)
@@ -404,7 +406,9 @@ function minSecToMin(mn, sc){ return (parseFloat(mn)||0) + (parseFloat(sc)||0)/6
 // per-set chip/line text, aware of dumbbell ("35s") and rowing (km in min · pace)
 function setText(w, s){
   if(groupKind(w.group)==='cardio')
-    return isRow(w) ? `${s.w}m in ${fmtDur(s.r)} · ${fmtPace(pace(s))} km/min` : `${s.r}min @ ${s.w}`;
+    return isRow(w) ? `${s.w}m in ${fmtDur(s.r)} · ${fmtPace(pace(s))} km/min`
+         : isTimeOnly(w) ? `${s.r} min`
+         : `${s.r}min @ ${s.w}`;
   if(isHold(w)) return `${fmtDur(s.r)}${s.w?` · ${s.w} lb`:''}`;
   if(isRepsOnly(w)) return `${s.r} reps`;
   return w.db ? `${s.r}×${s.w}s` : `${s.r}×${s.w}`;
@@ -455,10 +459,16 @@ function cardioMET(name){
   if(/treadmill|run|jog|sprint/.test(n)) return 9;
   if(/stair|step ?mill|stairmaster/.test(n)) return 9;
   if(/swim/.test(n)) return 8;
+  if(/soccer|football(?!\s*american)/.test(n)) return 7;
+  if(/basketball/.test(n)) return 6.5;
+  if(/volleyball/.test(n)) return 6;          // competitive indoor; beach ~8
+  if(/tennis|pickleball/.test(n)) return 7;
+  if(/hike|hiking/.test(n)) return 6;
   if(/row/.test(n)) return 7;
   if(/bike|cycl|spin/.test(n)) return 7;
   if(/elliptical/.test(n)) return 5;
   if(/walk/.test(n)) return 3.8;
+  if(/yoga|stretch/.test(n)) return 2.5;
   return 7;
 }
 // total calories burned across every workout logged on `date`
@@ -541,6 +551,7 @@ async function initSync(){
   ensureMetrics();
   ensureAbsSeed();
   ensurePlankHold();
+  ensureVolleyball();
   renderAll(); stampUpdated();
   setSync('ok','Synced');
 }
@@ -598,6 +609,16 @@ function ensurePlankHold(){
   const p = DATA.workouts['Plank'];
   if(p && !isHold(p)) p.hold = true;
   DATA._plankHold = true;
+  saveLocal();
+}
+// One-time: add Volleyball to cardio in time-only mode for existing installs. Synced flag.
+function ensureVolleyball(){
+  if(DATA._volleyballSeeded) return;
+  if(!DATA.workouts['Volleyball'])
+    DATA.workouts['Volleyball'] = { group:'cardio', demo:demoUrl('Volleyball'), sessions:{}, timeOnly:true, created:Date.now() };
+  else if(!DATA.workouts['Volleyball'].timeOnly)
+    DATA.workouts['Volleyball'].timeOnly = true;          // also flag if ensureSeed just made it
+  DATA._volleyballSeeded = true;
   saveLocal();
 }
 
@@ -713,7 +734,7 @@ function renderWorkouts(){
         const dts = sortedDates(w.sessions);
         const last = dts[dts.length-1];
         const sets = last ? w.sessions[last] : [];
-        const row = isRow(w), hold = isHold(w), repsOnly = isRepsOnly(w);
+        const row = isRow(w), hold = isHold(w), repsOnly = isRepsOnly(w), timeOnly = isTimeOnly(w);
         const hl = last ? setHighlight(w, sets) : '';
         const setsHtml = last
           ? sets.map((s,si)=>`<span class="set${(si===sets.length-1&&hl)?' '+hl:''}">${setText(w,s)}</span>`).join('')
@@ -722,9 +743,10 @@ function renderWorkouts(){
           : row      ? `<span class="out-val">${fmtPace(sessionPace(sets))}</span> <span class="muted">km/min</span>`
           : hold     ? `<span class="out-val">${fmtDur(sessionBestHold(sets))}</span> <span class="muted">best</span>`
           : repsOnly ? `<span class="out-val">${sessionReps(sets).toLocaleString()}</span> <span class="muted">reps</span>`
+          : timeOnly ? `<span class="out-val">${Math.round(sessionReps(sets))}</span> <span class="muted">min</span>`
                      : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span>`;
         const lt = last ? lastSetTime(sets) : null;
-        const outLabel = cardio ? (row?'Pace':'Work') : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
+        const outLabel = cardio ? (row?'Pace':timeOnly?'Total Min':'Work') : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
         const tr = el(`<tr>
           <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
               <span class="info-ic" data-demo="${encodeURIComponent(name)}" title="How to do it">ℹ</span></td>
@@ -806,10 +828,10 @@ function renderModal(){
   const today = todayStr();
   const todaySets = w.sessions[today] || [];
 
-  const row = isRow(w), hold = isHold(w), repsOnly = isRepsOnly(w);
+  const row = isRow(w), hold = isHold(w), repsOnly = isRepsOnly(w), timeOnly = isTimeOnly(w);
   // chart points across sessions (filtered by the selected time range)
   const cdts = filterDates(dts);
-  const ptsOut = cdts.map(d=>({label:fmtDate(d), value: row?sessionPace(w.sessions[d]):hold?sessionBestHold(w.sessions[d]):repsOnly?sessionBestReps(w.sessions[d]):workoutOutput(w, w.sessions[d])}));
+  const ptsOut = cdts.map(d=>({label:fmtDate(d), value: row?sessionPace(w.sessions[d]):hold?sessionBestHold(w.sessions[d]):repsOnly?sessionBestReps(w.sessions[d]):timeOnly?sessionReps(w.sessions[d]):workoutOutput(w, w.sessions[d])}));
   const ptsRep = cdts.map(d=>({label:fmtDate(d), value:sessionReps(w.sessions[d])}));
   const ptsSet = cdts.map(d=>({label:fmtDate(d), value:w.sessions[d].length}));
   const lastOut = ptsOut.length?ptsOut[ptsOut.length-1].value:0;
@@ -830,14 +852,15 @@ function renderModal(){
       <a href="${w.demo}" target="_blank" rel="noopener">▶ form demo</a> ·
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
     ${cardio
-      ? `<label class="opt"><input type="checkbox" id="w-row"${row?' checked':''}> Rowing mode — log distance &amp; time, show km/min</label>`
+      ? `<label class="opt"><input type="checkbox" id="w-row"${row?' checked':''}> Rowing mode — log distance &amp; time, show km/min</label>
+         <label class="opt"><input type="checkbox" id="w-timeonly"${timeOnly?' checked':''}> Sport mode — just log minutes (volleyball, basketball, etc.)</label>`
       : `<label class="opt"><input type="checkbox" id="w-hold"${hold?' checked':''}> Timed hold (plank) — log time + optional added weight</label>
          ${(hold||gid==='abs')?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
          ${(gid==='abs'&&!hold)?`<label class="opt"><input type="checkbox" id="w-wt"${w.weighted?' checked':''}> Track weight (weight × reps) — for machines/weighted ab work</label>`:''}`}
 
     ${rangeToggle()}
     <div class="charts">
-      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':hold?'Longest Hold':repsOnly?'Best Set (reps)':(cardio?'Work':'Total Output')}</div>
+      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':hold?'Longest Hold':repsOnly?'Best Set (reps)':timeOnly?'Total Min':(cardio?'Work':'Total Output')}</div>
         <div class="cval">${row?fmtPace(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, row?'#22d3ee':'#34d399')}</div>
       <div class="chart-card"><div class="clab">${hold?'Total Time':repsOnly?'Total Reps':(row||cardio?'Total Min':'Total Reps')}</div>
         <div class="cval">${hold?fmtDur(lastRep):lastRep.toLocaleString()}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
@@ -853,6 +876,8 @@ function renderModal(){
            <div class="field"><label>Weight (lb) — optional</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="bodyweight"></div>`
         : repsOnly
         ? `<div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="15"></div>`
+        : timeOnly
+        ? `<div class="field"><label>Minutes</label><input class="num" id="in-r" type="number" inputmode="decimal" step="any" placeholder="60"></div>`
         : `<div class="field"><label>${wL}</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="${row?'5000':(cardio?'6.0':'135')}"></div>
            ${row
              ? `<div class="field"><label>Min</label><input class="num" id="in-min" type="number" inputmode="numeric" step="any" placeholder="20" style="width:70px"></div>
@@ -890,7 +915,8 @@ function renderModal(){
   m.querySelector('#w-close').onclick = closeWorkout;
   m.querySelector('#w-rename').onclick = ()=>renameWorkout(name);
   const dbc = m.querySelector('#w-db'); if(dbc) dbc.onchange=()=>{ w.db=dbc.checked; save(); renderModal(); renderWorkouts(); };
-  const rwc = m.querySelector('#w-row'); if(rwc) rwc.onchange=()=>{ w.row=rwc.checked; save(); renderModal(); renderWorkouts(); };
+  const rwc = m.querySelector('#w-row'); if(rwc) rwc.onchange=()=>{ w.row=rwc.checked; if(w.row) delete w.timeOnly; save(); renderModal(); renderWorkouts(); };
+  const toc = m.querySelector('#w-timeonly'); if(toc) toc.onchange=()=>{ w.timeOnly=toc.checked; if(w.timeOnly) delete w.row; save(); renderModal(); renderWorkouts(); };
   const hdc = m.querySelector('#w-hold'); if(hdc) hdc.onchange=()=>{ w.hold=hdc.checked; if(w.hold) delete w.db; save(); renderModal(); renderWorkouts(); };
   const wtc = m.querySelector('#w-wt'); if(wtc) wtc.onchange=()=>{ w.weighted=wtc.checked; save(); renderModal(); renderWorkouts(); };
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
@@ -902,6 +928,9 @@ function renderModal(){
       if(rv<=0){ document.getElementById('in-min').focus(); return; }
     } else if(repsOnly){                        // abs: reps only, no weight
       rv = parseInt(document.getElementById('in-r').value,10); wv = 0;
+      if(isNaN(rv)||rv<=0){ document.getElementById('in-r').focus(); return; }
+    } else if(timeOnly){                        // sport: minutes only, no level/speed
+      rv = parseFloat(document.getElementById('in-r').value); wv = 0;
       if(isNaN(rv)||rv<=0){ document.getElementById('in-r').focus(); return; }
     } else {
       wv = parseFloat(document.getElementById('in-w').value);
@@ -985,7 +1014,7 @@ function renderMetricModal(){
 }
 // One editable set row (weight/reps, or distance/min/sec, or hold time+weight, or reps-only)
 function setEditRow(w, s, i){
-  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w);
+  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
   const wL = row?'Dist (m)':(cardio?'Spd/Lvl':'Weight');
   const rL = cardio?'Minutes':'Reps';
   const so = row ? `${fmtPace(pace(s))} km/min`
@@ -995,6 +1024,8 @@ function setEditRow(w, s, i){
   let inputs;
   if(repsOnly){
     inputs = `<div class="field"><label>Reps</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${s.r}" style="width:74px"></div>`;
+  } else if(timeOnly){
+    inputs = `<div class="field"><label>Minutes</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.r}" style="width:84px"></div>`;
   } else if(row || hold){
     const mn=Math.floor(s.r||0), sc=Math.round(((s.r||0)-mn)*60);
     const timeFields = `<div class="field"><label>Min</label><input class="num pe-in" data-pf="min" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${mn}" style="width:60px"></div>
