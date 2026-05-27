@@ -472,6 +472,14 @@ function cardioMET(name){
   if(/yoga|stretch/.test(n)) return 2.5;
   return 7;
 }
+// calories from a daily walking metric value (Walking Distance miles, or Steps)
+function metricBurn(w, date, val){
+  if(!isMetric(w) || val==null) return 0;
+  const bw=bwOn(date);
+  if(w.metric==='distance') return 0.53 * bw * val;          // MET 3.5 walking, ~96 cal/mi @ 182 lb
+  if(w.metric==='steps')    return 0.53 * bw * (val/2000);   // fallback: ~2000 steps/mile
+  return 0;
+}
 // calories burned for one cardio session (sets on `date`)
 function sessionBurn(name, w, sets, date){
   if(groupKind(w.group)!=='cardio' || isMetric(w)) return 0;
@@ -801,7 +809,7 @@ function metricRow(name, w){
   return el(`<tr>
     <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
         <span class="info-ic" data-open="${encodeURIComponent(name)}" title="View history">📈</span></td>
-    <td data-label="Latest">${val==null?'<span class="muted">—</span>':`<span class="out-val">${fmtMetricVal(w,val)}</span> <span class="muted">${mi.unit}</span>`}</td>
+    <td data-label="Latest">${val==null?'<span class="muted">—</span>':`<span class="out-val">${fmtMetricVal(w,val)}</span> <span class="muted">${mi.unit}</span>${(()=>{const c=Math.round(metricBurn(w,last,+val));return c>0?`<div class="out-sub">🔥 ${c.toLocaleString()} cal</div>`:'';})()}`}</td>
     <td data-label="Last">${last?fmtDate(last):'<span class="muted">—</span>'}</td>
     <td class="sets-cell" data-label="Recent days">${recent}</td>
     <td class="c-del"></td>
@@ -1002,10 +1010,16 @@ function renderMetricModal(){
 
     <div class="block-title">Recent days</div>
     <div class="today-sets" id="m-list">${
-      dts.slice(-14).reverse().map(d=>`<div class="set-line">
+      dts.slice(-14).reverse().map(d=>{
+        const v = w.sessions[d];
+        const cal = Math.round(metricBurn(w, d, +v));
+        const calHtml = cal>0 ? `<span class="so" style="color:#f59e0b">🔥 ${cal.toLocaleString()} cal</span>` : '';
+        return `<div class="set-line">
           <span>${fmtDateLong(d)}</span>
-          <span class="so">${fmtMetricVal(w,w.sessions[d])} ${mi.unit}</span>
-          <button class="del" data-mrm="${d}">×</button></div>`).join('')
+          <span class="so">${fmtMetricVal(w,v)} ${mi.unit}</span>
+          ${calHtml}
+          <button class="del" data-mrm="${d}">×</button></div>`;
+      }).join('')
       || '<div class="muted" style="font-size:13px">No days logged yet.</div>'
     }</div>`;
   m.querySelector('#w-close').onclick = closeWorkout;
