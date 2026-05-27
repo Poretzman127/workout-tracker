@@ -80,6 +80,7 @@
   .sets-cell .set{display:inline-block;background:var(--panel2);border:1px solid var(--line);
     border-radius:6px;padding:1px 6px;margin:1px 2px;color:var(--txt);font-size:11.5px;}
   .out-val{font-weight:700;color:var(--accent);}
+  .out-sub{font-size:12px;color:#f59e0b;margin-top:2px;font-weight:600;}
   .muted{color:var(--muted);}
   .del{color:var(--muted);cursor:pointer;border:none;background:none;font-size:15px;padding:2px 6px;}
   .del:hover{color:var(--hot);}
@@ -471,6 +472,13 @@ function cardioMET(name){
   if(/yoga|stretch/.test(n)) return 2.5;
   return 7;
 }
+// calories burned for one cardio session (sets on `date`)
+function sessionBurn(name, w, sets, date){
+  if(groupKind(w.group)!=='cardio' || isMetric(w)) return 0;
+  const min = sessionReps(sets);
+  if(!(min>0)) return 0;
+  return cardioMET(name) * (bwOn(date)/2.205) * (min/60);
+}
 // total calories burned across every workout logged on `date`
 function dayBurn(date){
   const bwLb=bwOn(date), bwKg=bwLb/2.205;
@@ -739,12 +747,14 @@ function renderWorkouts(){
         const setsHtml = last
           ? sets.map((s,si)=>`<span class="set${(si===sets.length-1&&hl)?' '+hl:''}">${setText(w,s)}</span>`).join('')
           : '<span class="muted">—</span>';
+        const burnCal = cardio && last ? Math.round(sessionBurn(name, w, sets, last)) : 0;
+        const burnLine = burnCal>0 ? `<div class="out-sub">🔥 ${burnCal.toLocaleString()} cal</div>` : '';
         const outCell = !last ? '<span class="muted">—</span>'
-          : row      ? `<span class="out-val">${fmtPace(sessionPace(sets))}</span> <span class="muted">km/min</span>`
+          : row      ? `<span class="out-val">${fmtPace(sessionPace(sets))}</span> <span class="muted">km/min</span>${burnLine}`
           : hold     ? `<span class="out-val">${fmtDur(sessionBestHold(sets))}</span> <span class="muted">best</span>`
           : repsOnly ? `<span class="out-val">${sessionReps(sets).toLocaleString()}</span> <span class="muted">reps</span>`
-          : timeOnly ? `<span class="out-val">${Math.round(sessionReps(sets))}</span> <span class="muted">min</span>`
-                     : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span>`;
+          : timeOnly ? `<span class="out-val">${Math.round(sessionReps(sets))}</span> <span class="muted">min</span>${burnLine}`
+                     : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span> <span class="muted">${cardio?'work':'lbs'}</span>${burnLine}`;
         const lt = last ? lastSetTime(sets) : null;
         const outLabel = cardio ? (row?'Pace':timeOnly?'Total Min':'Work') : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
         const tr = el(`<tr>
