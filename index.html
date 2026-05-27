@@ -415,13 +415,13 @@ function setText(w, s){
 }
 // read-only line for a set: {desc, so(output)} — shared by today's list + prior-day view
 function setDescSo(w, s){
-  const cardio=groupKind(w.group)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w);
+  const cardio=groupKind(w.group)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
   const desc = cardio
-    ? (row ? `${s.w} m in ${fmtDur(s.r)}` : `${s.r} min @ level ${s.w}`)
+    ? (row ? `${s.w} m in ${fmtDur(s.r)}` : timeOnly ? `${s.r} min` : `${s.r} min @ level ${s.w}`)
     : hold ? `${fmtDur(s.r)} hold${s.w?` · ${s.w} lb`:''}`
     : repsOnly ? `${s.r} reps`
     : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
-  const so = row ? `${fmtPace(pace(s))} km/min` : (hold||repsOnly) ? '' : (s.w*s.r*dbMult(w)).toLocaleString();
+  const so = row ? `${fmtPace(pace(s))} km/min` : (hold||repsOnly||timeOnly) ? '' : (s.w*s.r*dbMult(w)).toLocaleString();
   return {desc, so};
 }
 // progression highlight for a lift's latest set vs the one before it (same day)
