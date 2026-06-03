@@ -58,6 +58,7 @@
   .section-head .sec-date.none{color:var(--muted);font-weight:400;}
   .section-head .sec-output{font-size:11px;font-weight:700;color:var(--warn);background:var(--panel2);
     border:1px solid var(--line);border-radius:999px;padding:2px 8px;}
+  .section-head .sec-meta{display:inline-flex;gap:6px;align-items:center;flex-shrink:0;white-space:nowrap;}
   .btn{background:var(--accent);color:#062014;border:none;border-radius:8px;
     padding:7px 13px;font-size:13px;font-weight:700;cursor:pointer;}
   .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);}
@@ -768,8 +769,10 @@ function renderWorkouts(){
     sec.appendChild(el(`<div class="section-head" data-toggle="${g.id}">
       <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
-      <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
-      ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">${Math.round(lastOut).toLocaleString()}</span>`:''}
+      <span class="sec-meta">
+        <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
+        ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">${Math.round(lastOut).toLocaleString()}</span>`:''}
+      </span>
     </div>`));
     if(!collapsed[g.id]){
       sec.appendChild(el(`<button class="btn ghost sm add-full" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>`));
