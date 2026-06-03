@@ -86,6 +86,10 @@
   .del:hover{color:var(--hot);}
   .empty{padding:18px;color:var(--muted);text-align:center;font-size:13px;}
   /* progression highlight on the latest set (chips + modal lines) */
+  .prior-expanded-list{display:flex;flex-direction:column;gap:10px;margin-top:6px;}
+  .prior-expanded{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;}
+  .prior-expanded .pe-head{margin-bottom:6px;font-size:13px;}
+  .prior-expanded .today-sets{margin-top:0;}
   .hl-green{background:rgba(52,211,153,.16)!important;border-color:var(--accent)!important;color:var(--accent)!important;}
   .hl-yellow{background:rgba(245,197,66,.16)!important;border-color:var(--warn)!important;color:var(--warn)!important;}
   .hl-red{background:rgba(255,107,74,.16)!important;border-color:var(--hot)!important;color:var(--hot)!important;}
@@ -429,10 +433,10 @@ function setDescSo(w, s){
 function setHighlight(w, sets){
   if(!sets || sets.length<2 || groupKind(w.group)==='cardio' || isMetric(w) || isHold(w) || isRepsOnly(w)) return '';
   const a=sets[sets.length-2], b=sets[sets.length-1];
-  if(b.w===a.w && b.r===a.r) return 'hl-green';   // dominated weight class
-  if(b.w===a.w && b.r<a.r)   return 'hl-yellow';  // almost dominated
-  if(b.w> a.w && b.r<a.r)    return 'hl-red';     // pushed heavier to failure
-  return '';
+  // every lift set gets a color vs the prior set: matched/beat = green, pushed heavier but fewer reps = red, otherwise = yellow (still grinding)
+  if(b.w>=a.w && b.r>=a.r) return 'hl-green';
+  if(b.w> a.w && b.r< a.r) return 'hl-red';
+  return 'hl-yellow';
 }
 function sortedDates(obj){ return Object.keys(obj||{}).sort(); }      // asc
 function groupKind(gid){ return (GROUPS.find(g=>g.id===gid)||{}).kind; }
@@ -446,6 +450,18 @@ function fmtMetricVal(w, v){ return v==null?'—':(+v).toLocaleString(undefined,
 //   gym session (first→last lift timestamp), NOT per exercise, so it isn't multiplied up.
 // Cardio: MET formula → cal = MET × bodyweight (kg) × hours, using the logged minutes.
 const DEFAULT_BW = 182;                       // lb, fallback if no body weight logged
+// Mifflin-St Jeor BMR (resting energy expenditure). Hardcoded user stats per memory:
+// 6'1" (185.42 cm), male, ~28 yr. Updates the day-burn floor with whatever weight is logged.
+const USER_HEIGHT_CM = 185.42, USER_AGE = 28;
+function bmr(lb){ const kg = lb/2.205; return 10*kg + 6.25*USER_HEIGHT_CM - 5*USER_AGE + 5; }
+// resting calories burned across a date — prorate today by elapsed hours so net cal is meaningful mid-day
+function restingBurn(date){
+  const full = bmr(bwOn(date));
+  if(date !== todayStr()) return full;
+  const now = new Date();
+  const elapsedHr = (now.getHours()*60 + now.getMinutes()) / 60;
+  return full * (elapsedHr/24);
+}
 // body weight as of a given date: most recent reading on or before it
 function bwOn(date){
   const dts=sortedDates(DATA.body); if(!dts.length) return DEFAULT_BW;
@@ -463,6 +479,7 @@ function cardioMET(name){
   if(/soccer|football(?!\s*american)/.test(n)) return 7;
   if(/basketball/.test(n)) return 6.5;
   if(/volleyball/.test(n)) return 4;          // recreational pickup; competitive ~6, beach ~8
+  if(/trampoline|rebound/.test(n)) return 4.5; // recreational bouncing ~3.5, vigorous workout ~6
   if(/tennis|pickleball/.test(n)) return 7;
   if(/hike|hiking/.test(n)) return 6;
   if(/row/.test(n)) return 7;
@@ -523,8 +540,9 @@ function dayBurn(date){
   const miles = (distV!=null && distV>0) ? distV
               : (stepV!=null && stepV>0) ? stepV/2000 : 0;
   const walkCal = 0.53 * bwLb * miles;
-  return {total:strengthCal+cardioCal+walkCal,
-          strength:strengthCal, cardio:cardioCal, walk:walkCal,
+  const restCal = restingBurn(date);
+  return {total:strengthCal+cardioCal+walkCal+restCal,
+          strength:strengthCal, cardio:cardioCal, walk:walkCal, rest:restCal,
           nLift, nCardio, liftMin, cardioMin, miles, steps:stepV||0,
           weightMoved, bw:bwLb};
 }
@@ -818,6 +836,7 @@ function metricRow(name, w){
 
 /* ----- workout modal ----- */
 let modalName = null, modalPriorDate = null, modalRange = '7d', editToday = false, editPrior = false;
+let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
 const RANGE_LABEL = {'7d':'7D', '15d':'15D', '30d':'30D', '1y':'1Y', 'all':'All'};
@@ -838,6 +857,28 @@ function openWorkout(name){
   document.getElementById('w-overlay').classList.add('show');
 }
 function closeWorkout(){ document.getElementById('w-overlay').classList.remove('show'); modalName=null; }
+// Read-only expanded view of one prior session — used to auto-show the last 3 sessions
+// in the workout modal so the user doesn't have to click chips to see them.
+function priorExpandedHtml(w, date){
+  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
+  const sets = w.sessions[date]||[];
+  const summary = row
+    ? `${sessionDist(sets)} m · ${fmtPace(sessionPace(sets))} km/min`
+    : hold ? `best ${fmtDur(sessionBestHold(sets))}`
+    : repsOnly ? `${sessionReps(sets)} reps`
+    : timeOnly ? `${sessionReps(sets)} min`
+    : cardio ? `${sessionReps(sets)} min`
+    : `output ${workoutOutput(w, sets).toLocaleString()}`;
+  const list = sets.map((s,i)=>{
+    const {desc, so} = setDescSo(w, s);
+    const hl = (i===sets.length-1) ? setHighlight(w, sets) : '';
+    return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span></div>`;
+  }).join('') || '<div class="muted" style="font-size:13px">No sets on this day.</div>';
+  return `<div class="prior-expanded">
+    <div class="pe-head"><b>${fmtDateLong(date)}</b> <span class="muted" style="font-size:12px">· ${summary}</span></div>
+    <div class="today-sets">${list}</div>
+  </div>`;
+}
 function renderModal(){
   if(isMetric(DATA.workouts[modalName])) return renderMetricModal();
   const name = modalName, w = DATA.workouts[name];
@@ -876,16 +917,6 @@ function renderModal(){
          ${(hold||gid==='abs')?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
          ${(gid==='abs'&&!hold)?`<label class="opt"><input type="checkbox" id="w-wt"${w.weighted?' checked':''}> Track weight (weight × reps) — for machines/weighted ab work</label>`:''}`}
 
-    ${rangeToggle()}
-    <div class="charts">
-      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':hold?'Longest Hold':repsOnly?'Best Set (reps)':timeOnly?'Total Min':(cardio?'Work':'Total Output')}</div>
-        <div class="cval">${row?fmtPace(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, row?'#22d3ee':'#34d399')}</div>
-      <div class="chart-card"><div class="clab">${hold?'Total Time':repsOnly?'Total Reps':(row||cardio?'Total Min':'Total Reps')}</div>
-        <div class="cval">${hold?fmtDur(lastRep):lastRep.toLocaleString()}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
-      <div class="chart-card"><div class="clab">Sets</div>
-        <div class="cval">${lastSet}<small> last</small></div>${spark(ptsSet,'#f5c542')}</div>
-    </div>
-
     <div class="block-title">Log a set you just did (${fmtDateLong(today)})</div>
     <div class="field-row">
       ${hold
@@ -921,13 +952,35 @@ function renderModal(){
             <button class="del" data-rm="${i}">×</button></div>`;}).join('')
     }</div>
 
-    <div class="block-title">Prior sessions</div>
-    <div class="prior-list" id="prior-list">${
-      dts.filter(d=>d!==today).reverse().map(d=>
-        `<span class="prior-chip${modalPriorDate===d?' active':''}" data-prior="${d}">${fmtDate(d)}</span>`).join('')
-        || '<span class="muted" style="font-size:13px">No prior sessions.</span>'
-    }</div>
-    <div class="prior-detail" id="prior-detail">${priorDetailHtml(name)}</div>
+    ${(()=>{
+      const priorAll = dts.filter(d=>d!==today).slice().reverse();   // newest first
+      const top3 = priorAll.slice(0,3);
+      const older = priorAll.slice(3);
+      const expanded = top3.length
+        ? `<div class="prior-expanded-list">${top3.map(d=>priorExpandedHtml(w,d)).join('')}</div>`
+        : '<div class="muted" style="font-size:13px;margin-top:6px">No prior sessions.</div>';
+      const chips = older.length
+        ? `<div class="prior-list" id="prior-list">${older.map(d=>
+            `<span class="prior-chip${modalPriorDate===d?' active':''}" data-prior="${d}">${fmtDate(d)}</span>`).join('')}</div>`
+        : '';
+      return `<div class="block-title">Recent sessions</div>${expanded}${
+        older.length?`<div class="block-title" style="font-size:13px;margin-top:14px">Older sessions</div>${chips}
+        <div class="prior-detail" id="prior-detail">${priorDetailHtml(name)}</div>`:''}`;
+    })()}
+
+    <div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:18px">
+      <span>📈 Trends</span>
+      <button class="btn ghost mini" id="charts-toggle" style="margin-left:auto">${chartsOpen?'▾ Hide':'▸ Show'}</button>
+    </div>
+    ${chartsOpen ? `${rangeToggle()}
+    <div class="charts">
+      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':hold?'Longest Hold':repsOnly?'Best Set (reps)':timeOnly?'Total Min':(cardio?'Work':'Total Output')}</div>
+        <div class="cval">${row?fmtPace(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, row?'#22d3ee':'#34d399')}</div>
+      <div class="chart-card"><div class="clab">${hold?'Total Time':repsOnly?'Total Reps':(row||cardio?'Total Min':'Total Reps')}</div>
+        <div class="cval">${hold?fmtDur(lastRep):lastRep.toLocaleString()}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
+      <div class="chart-card"><div class="clab">Sets</div>
+        <div class="cval">${lastSet}<small> last</small></div>${spark(ptsSet,'#f5c542')}</div>
+    </div>` : ''}
   `;
   // wire
   m.querySelector('#w-close').onclick = closeWorkout;
@@ -974,6 +1027,7 @@ function renderModal(){
     renderModal();
   });
   const ep = m.querySelector('#edit-prior'); if(ep) ep.onclick=()=>{ editPrior=!editPrior; renderModal(); };
+  const ct = m.querySelector('#charts-toggle'); if(ct) ct.onclick=()=>{ chartsOpen=!chartsOpen; localStorage.setItem('wt_chartsOpen', chartsOpen?'1':'0'); renderModal(); };
   // editable set rows for today (edit mode) and the open prior day — both scoped by data-editdate
   wireSetEditors(m, w);
 }
@@ -1309,10 +1363,8 @@ function goalLine(value, target, isProtein, unit){
 }
 // daily workout-burn bar shown under the date nav in the Nutrition tab
 function burnBarHtml(b, tot){
-  if(!b.nLift && !b.nCardio && !b.miles)
-    return `<div class="burn-bar empty"><span class="bb-fire">🔥</span>
-      <div class="bb-main"><span class="bb-val">0</span> cal · no workout logged</div></div>`;
   const parts=[];
+  parts.push(`${Math.round(b.rest||0)} resting`);
   if(b.nLift)   parts.push(`${b.nLift} lift${b.nLift>1?'s':''} · ${Math.round(b.liftMin)} min`);
   if(b.nCardio) parts.push(`${b.nCardio} cardio · ${Math.round(b.cardioMin)} min`);
   if(b.miles)   parts.push(`${b.miles.toFixed(1)} mi walked`);
