@@ -56,6 +56,8 @@
   .section-head .sec-date{font-size:11px;font-weight:600;color:var(--accent2);background:var(--panel2);
     border:1px solid var(--line);padding:2px 8px;border-radius:999px;white-space:nowrap;}
   .section-head .sec-date.none{color:var(--muted);font-weight:400;}
+  .section-head .sec-output{font-size:11px;font-weight:700;color:var(--warn);background:var(--panel2);
+    border:1px solid var(--line);border-radius:999px;padding:2px 8px;}
   .btn{background:var(--accent);color:#062014;border:none;border-radius:8px;
     padding:7px 13px;font-size:13px;font-weight:700;cursor:pointer;}
   .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent);}
@@ -718,6 +720,23 @@ function groupLastDate(gid){
   }
   return best;
 }
+// Sum of output across the group's exercises ONLY for the group's latest workout date.
+// Exercises whose own latest session is older than the group's latest are excluded — so a
+// back/bi workout that hit lat pulldown today but skipped palm-up pulldown won't roll the
+// palm-up's last-week numbers into today's total. Cardio groups return null (no output).
+function groupLastOutput(gid){
+  const lastD = groupLastDate(gid);
+  if(!lastD || groupKind(gid)==='cardio') return null;
+  let total = 0;
+  for(const name in DATA.workouts){
+    const w = DATA.workouts[name];
+    if(w.group!==gid || isMetric(w)) continue;
+    const dts = sortedDates(w.sessions);
+    if(!dts.length || dts[dts.length-1] !== lastD) continue;
+    total += workoutOutput(w, w.sessions[lastD]);
+  }
+  return total;
+}
 function workoutsByGroup(gid){
   return Object.keys(DATA.workouts)
     .filter(n=>DATA.workouts[n].group===gid)
@@ -743,11 +762,13 @@ function renderWorkouts(){
     const names = workoutsByGroup(g.id);
     const cardio = g.kind==='cardio';
     const lastD = groupLastDate(g.id);
+    const lastOut = groupLastOutput(g.id);
     const sec = el(`<div class="section"></div>`);
     sec.appendChild(el(`<div class="section-head" data-toggle="${g.id}">
       <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
       <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
+      ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">Σ ${Math.round(lastOut).toLocaleString()}</span>`:''}
       ${collapsed[g.id]?'':`<button class="btn ghost sm add-row" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>`}
     </div>`));
     const body = el(`<div class="section-body"${collapsed[g.id]?' style="display:none"':''}></div>`);
