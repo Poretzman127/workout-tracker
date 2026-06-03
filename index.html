@@ -64,6 +64,7 @@
   .btn.sm{padding:4px 9px;font-size:12px;}
   .btn.mini{padding:2px 7px;font-size:11px;}
   .add-row{margin-left:auto;}
+  .add-full{display:block;width:100%;margin:0 0 10px;text-align:center;}
 
   .table-wrap{border:1px solid var(--line);border-radius:var(--radius);overflow:auto;background:var(--panel);}
   table{width:100%;border-collapse:separate;border-spacing:0;}
@@ -768,9 +769,11 @@ function renderWorkouts(){
       <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
       <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
-      ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">Σ ${Math.round(lastOut).toLocaleString()}</span>`:''}
-      ${collapsed[g.id]?'':`<button class="btn ghost sm add-row" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>`}
+      ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">${Math.round(lastOut).toLocaleString()}</span>`:''}
     </div>`));
+    if(!collapsed[g.id]){
+      sec.appendChild(el(`<button class="btn ghost sm add-full" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>`));
+    }
     const body = el(`<div class="section-body"${collapsed[g.id]?' style="display:none"':''}></div>`);
     const wrap = el(`<div class="table-wrap"></div>`);
     if(!names.length){
