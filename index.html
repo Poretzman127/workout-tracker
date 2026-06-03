@@ -1568,9 +1568,9 @@ function renderBody(){
 
     <div class="uploader" style="margin-top:18px">
       <div style="font-size:15px;font-weight:700">📷 Scan a body-composition screenshot</div>
-      <p>Upload a screenshot of your smart-scale app and I'll read the numbers into the form below — then check &amp; Save.
-         ${aiKey()?'':'<b>Add an Anthropic API key in ⚙ Settings to enable scanning.</b>'}</p>
-      <input type="file" id="bc-file" accept="image/*" ${aiKey()?'':'disabled'}>
+      <p>Upload a screenshot of your smart-scale app and I'll read the numbers into the form below — then check &amp; Save.</p>
+      ${aiKey()?'':`<div class="field" style="margin-bottom:10px"><label>Anthropic API key <span style="color:var(--muted);font-weight:400">(saves on this device — get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>)</span></label><input id="bc-aikey" placeholder="sk-ant-…" autocomplete="off"></div>`}
+      <input type="file" id="bc-file" accept="image/*">
       <div id="bc-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
     </div>
 
@@ -1602,6 +1602,11 @@ function renderBody(){
   };
   root.querySelector('#bc-metric').onchange = e=>{ bodyMetric = e.target.value; renderBody(); };
   root.querySelector('#bc-file').onchange = e=>{ if(e.target.files[0]) scanBodyScreenshot(e.target.files[0], document.getElementById('bc-status')); };
+  const aiIn = root.querySelector('#bc-aikey');
+  if(aiIn) aiIn.onchange = e=>{
+    const v = e.target.value.trim();
+    if(v){ localStorage.setItem(LS_AI, v); renderBody(); }
+  };
   root.querySelector('#bc-save').onclick = ()=>{
     const d = document.getElementById('bc-date').value; if(!d) return;
     const wIn = parseFloat(document.getElementById('bc-weight').value);
@@ -1622,7 +1627,11 @@ function parseJsonLoose(t){ try{ return JSON.parse(t); }catch(e){} const m=t&&t.
 // send the screenshot to Claude vision, get back a JSON of metrics, prefill the form for review
 async function scanBodyScreenshot(file, statusEl){
   const key = aiKey();
-  if(!key){ statusEl.innerHTML = 'Add an Anthropic API key in ⚙ Settings first.'; return; }
+  if(!key){
+    statusEl.innerHTML = 'Paste your Anthropic API key above first.';
+    const f = document.getElementById('bc-aikey'); if(f) f.focus();
+    return;
+  }
   statusEl.innerHTML = '<span class="spin"></span> Reading screenshot…';
   try{
     const durl = await fileToDataURL(file);
