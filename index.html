@@ -772,7 +772,7 @@ function renderWorkouts(){
       <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
       <h2>${g.name}</h2><span class="pill">${names.length}</span>
       <span class="sec-meta">
-        <span class="sec-date${lastD?'':' none'}">${lastD?'📅 '+fmtDate(lastD):'no sessions'}</span>
+        <span class="sec-date${lastD?'':' none'}">${lastD?fmtDate(lastD):'no sessions'}</span>
         ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">${Math.round(lastOut).toLocaleString()}</span>`:''}
       </span>
     </div>`));
