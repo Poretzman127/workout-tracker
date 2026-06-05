@@ -269,3 +269,19 @@
   .login-err{color:var(--hot);font-size:12.5px;margin-bottom:10px;display:none;}
   .user-chip{display:flex;align-items:center;justify-content:space-between;gap:12px;color:var(--muted);font-size:12.5px;margin-top:14px;}
   .user-chip .logout{background:none;border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;}
+
+  /* trainees section in Settings */
+  .trainees-list{display:flex;flex-direction:column;gap:6px;margin:6px 0 10px;}
+  .trainee-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);}
+  .trainee-info{min-width:0;flex:1;}
+  .trainee-name{font-weight:600;color:var(--txt);font-size:14px;}
+  .trainee-sub{color:var(--muted);font-size:11.5px;margin-top:2px;}
+  .trainee-actions{display:flex;gap:6px;flex-shrink:0;}
+  .trainee-empty{color:var(--muted);font-size:13px;padding:10px 4px;font-style:italic;}
+  .trainee-form{margin-top:10px;padding:14px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;}
+  .trainee-form-buttons{display:flex;gap:8px;margin-top:8px;}
+  .trainee-err{color:var(--hot);font-size:12.5px;margin:6px 0 4px;}
+  @media (max-width: 768px){
+    .trainee-item{flex-direction:column;align-items:stretch;}
+    .trainee-actions{justify-content:flex-end;}
+  }

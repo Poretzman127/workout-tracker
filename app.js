@@ -26,25 +26,42 @@ const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78, fib:28, sod:2300};
 const goals = () => ({...DEFAULT_GOALS, ...(DATA.goals||{})});
 
 /* ============================== AUTH ============================== */
-// Hardcoded user map. Repo is public so passwords are weak by design — the gate's job is to
-// scope which profile a session reads/writes, not to defend against attackers. Add new
-// users by appending entries here. type: 'personal' = sees only own data; 'trainer' = can
-// flip between own profile + each linked trainee's profile.
-const USERS = {
+// Hardcoded baseline. Repo is public so passwords are weak by design — the gate's job is to
+// scope which profile a session reads/writes, not to defend against attackers. These can never
+// be removed via the UI (acts as a rescue path if dynamic users get into a bad state).
+const BUILTIN_USERS = {
   MPoretz:  { password:'Baloo123', type:'personal', displayName:'Max' },
   MaxCoach: { password:'Coach123', type:'trainer',  displayName:'Max (Coach)', trainees:['MPoretz'] },
 };
-const LS_USER   = 'wt_currentUser';
-const LS_ACTIVE = 'wt_activeProfile';   // per-device — trainers can pick a trainee to view
-const currentUser  = () => localStorage.getItem(LS_USER) || '';
-const userMeta     = () => USERS[currentUser()] || null;
-// Profiles a trainer can choose between (own + linked trainees that still exist in USERS).
+// Dynamically-added user accounts + per-trainer trainee links. Source of truth is the bin
+// (bin._users / bin._trainees); mirrored to localStorage so the login overlay can validate
+// known users without waiting for the network.
+let dynUsers    = {};
+let dynTrainees = {};
+
+const LS_USER     = 'wt_currentUser';
+const LS_ACTIVE   = 'wt_activeProfile';   // per-device — trainers can pick a trainee to view
+const LS_DYNU     = 'wt_dynUsers';
+const LS_DYNT     = 'wt_dynTrainees';
+const currentUser = () => localStorage.getItem(LS_USER) || '';
+
+function getUser(name){ return BUILTIN_USERS[name] || dynUsers[name] || null; }
+function traineesOf(trainerName){
+  if(Object.prototype.hasOwnProperty.call(dynTrainees, trainerName)){
+    return dynTrainees[trainerName] || [];
+  }
+  const u = BUILTIN_USERS[trainerName];
+  return (u && u.trainees) || [];
+}
+const userMeta = () => getUser(currentUser());
+
+// Profiles a trainer can choose between (own + linked trainees that still resolve).
 // Personal accounts get back just [self], so the dropdown collapses to nothing.
 function availableProfiles(){
   const me = userMeta();
   if(!me) return [];
   if(me.type === 'trainer'){
-    return [currentUser(), ...(me.trainees||[]).filter(t => USERS[t])];
+    return [currentUser(), ...traineesOf(currentUser()).filter(t => getUser(t))];
   }
   return [currentUser()];
 }
@@ -58,11 +75,36 @@ function currentProfile(){
 }
 const lsDataKey = () => LS_DATA_PREFIX + currentProfile();
 
-function attemptLogin(u, p){
-  const meta = USERS[u];
-  if(!meta || meta.password !== p) return false;
-  localStorage.setItem(LS_USER, u);
-  return true;
+function loadCachedUsers(){
+  try{ dynUsers    = JSON.parse(localStorage.getItem(LS_DYNU)) || {}; }catch(e){ dynUsers = {}; }
+  try{ dynTrainees = JSON.parse(localStorage.getItem(LS_DYNT)) || {}; }catch(e){ dynTrainees = {}; }
+}
+function saveCachedUsers(){
+  localStorage.setItem(LS_DYNU, JSON.stringify(dynUsers));
+  localStorage.setItem(LS_DYNT, JSON.stringify(dynTrainees));
+}
+// Refresh dyn users from the bin (so a trainee added on another device can log in here).
+// Called on background after showing the login overlay and as a side-effect of fetchRemote.
+async function fetchAndCacheUsers(){
+  const raw = await fetchBin();
+  if(!raw) return;
+  const bin = migrateBin(raw);
+  binCache = bin;
+  dynUsers    = bin._users    || {};
+  dynTrainees = bin._trainees || {};
+  saveCachedUsers();
+}
+
+function validateAuth(u, p){
+  const meta = getUser(u);
+  return !!(meta && meta.password === p);
+}
+async function attemptLogin(u, p){
+  if(validateAuth(u, p)){ localStorage.setItem(LS_USER, u); return true; }
+  // User may have been added on another device since our cache loaded — refresh and retry.
+  await fetchAndCacheUsers();
+  if(validateAuth(u, p)){ localStorage.setItem(LS_USER, u); return true; }
+  return false;
 }
 function doLogout(){
   localStorage.removeItem(LS_USER);
@@ -72,12 +114,20 @@ function showLoginGate(){
   document.body.classList.add('locked');
   const form = document.getElementById('login-form');
   const err  = document.getElementById('login-err');
-  form.onsubmit = (e)=>{
+  form.onsubmit = async (e)=>{
     e.preventDefault();
+    err.style.display = 'none';
     const u = document.getElementById('login-user').value.trim();
     const p = document.getElementById('login-pass').value;
-    if(attemptLogin(u, p)){ location.reload(); }
-    else { err.textContent = 'Invalid username or password.'; err.style.display='block'; }
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Signing in…';
+    const ok = await attemptLogin(u, p);
+    if(ok){ location.reload(); return; }
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Sign in';
+    err.textContent = 'Invalid username or password.';
+    err.style.display = 'block';
   };
 }
 
@@ -469,12 +519,16 @@ async function fetchBin(){
   }catch(e){ return null; }
 }
 // Returns {bin, profile, migrated}. profile = bin[currentProfile()] (may be null on first login).
+// Also syncs dyn users/trainees from the bin so multi-device add/remove propagates.
 async function fetchRemote(){
   const raw = await fetchBin();
   if(!raw) return { bin:null, profile:null, migrated:false };
   const migrated = raw._schema !== 2;
   const bin = migrateBin(raw);
   binCache = bin;
+  dynUsers    = bin._users    || {};
+  dynTrainees = bin._trainees || {};
+  saveCachedUsers();
   return { bin, profile: bin[currentProfile()] || null, migrated };
 }
 async function initSync(){
@@ -495,6 +549,7 @@ async function initSync(){
   ensureVolleyball();
   ensureBikeMode();
   renderAll(); stampUpdated();
+  renderProfileBar();   // dyn users may have changed elsewhere — refresh the dropdown
   setSync('ok','Synced');
 }
 function save(){            // call after any mutation
@@ -504,21 +559,30 @@ function save(){            // call after any mutation
   clearTimeout(pushTimer);
   pushTimer = setTimeout(pushRemote, 500);
 }
-async function pushRemote(){
+// General-purpose GET-modify-PUT. `updates` is a partial bin object applied on top of
+// the freshly-fetched bin (so concurrent edits to other slices aren't clobbered).
+// Always writes the current in-memory dynUsers/dynTrainees, so user/trainee state stays aligned.
+async function pushBin(updates){
   try{
-    // Always refetch immediately before PUT so we don't clobber concurrent edits to other profiles.
     const fresh = migrateBin(await fetchBin());
     binCache = fresh;
     binCache._schema = 2;
-    binCache[currentProfile()] = DATA;
+    if(Object.keys(dynUsers).length)    binCache._users    = dynUsers;
+    else                                delete binCache._users;
+    if(Object.keys(dynTrainees).length) binCache._trainees = dynTrainees;
+    else                                delete binCache._trainees;
+    Object.assign(binCache, updates);
     const r = await fetch(JSONBIN_URL, {
       method:'PUT',
       headers:{'Content-Type':'application/json','X-Master-Key':JSONBIN_KEY},
       body: JSON.stringify(binCache)
     });
     setSync(r.ok?'ok':'off', r.ok?'Synced':'Offline (saved locally)');
-  }catch(e){ setSync('off','Offline (saved locally)'); }
+    return r.ok;
+  }catch(e){ setSync('off','Offline (saved locally)'); return false; }
 }
+async function pushRemote(){ return pushBin({ [currentProfile()]: DATA }); }
+async function pushUsers(){  return pushBin({}); }
 function ensureSeed(){
   if(Object.keys(DATA.workouts).length) return;
   for(const gid in SEED){
@@ -1724,6 +1788,101 @@ async function importHealth(file, statusEl, fromDate){
 }
 
 /* ============================== SETTINGS ============================== */
+// Trainees section in Settings — only rendered for trainer accounts. List + add/edit/remove.
+function traineesSectionHtml(){
+  const me = userMeta();
+  if(!me || me.type !== 'trainer') return '';
+  const myList = traineesOf(currentUser()).filter(t => getUser(t));
+  const items = myList.map(uname => {
+    const u = getUser(uname);
+    const isBuiltin = !!BUILTIN_USERS[uname];
+    return `
+      <div class="trainee-item" data-uname="${uname}">
+        <div class="trainee-info">
+          <div class="trainee-name">${u.displayName||uname}</div>
+          <div class="trainee-sub">@${uname}${isBuiltin?' · built-in (link only)':''}</div>
+        </div>
+        <div class="trainee-actions">
+          ${isBuiltin?'':'<button class="btn ghost sm trainee-edit">Edit</button>'}
+          <button class="btn ghost sm trainee-remove">Remove</button>
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="block-title" style="margin-top:6px">My Trainees</div>
+    <div class="modal-sub">Add a trainee to give them their own profile in this app. They can log in on their own device with the username + password you set. You'll see them in the "Viewing" dropdown at the top.</div>
+    <div class="trainees-list">${items || '<div class="trainee-empty">No trainees yet — add your first one below.</div>'}</div>
+    <button class="btn ghost sm" id="trainee-add-btn">+ Add Trainee</button>
+    <div class="trainee-form" id="trainee-form" style="display:none">
+      <input type="hidden" id="t-editing">
+      <div class="field" style="margin-bottom:8px"><label>Display name</label><input id="t-display" placeholder="e.g. Jane Smith" autocapitalize="words"></div>
+      <div class="field" style="margin-bottom:8px"><label>Username (login)</label><input id="t-uname" placeholder="e.g. jane" autocapitalize="none" autocorrect="off"></div>
+      <div class="field" style="margin-bottom:8px"><label>Password</label><input id="t-pass" type="text" placeholder="they'll need this to log in"></div>
+      <div class="trainee-err" id="t-err" style="display:none"></div>
+      <div class="trainee-form-buttons">
+        <button class="btn sm" id="t-save">Save</button>
+        <button class="btn ghost sm" id="t-cancel">Cancel</button>
+      </div>
+    </div>`;
+}
+function wireTrainees(m){
+  const me = userMeta();
+  if(!me || me.type !== 'trainer') return;
+  const form    = m.querySelector('#trainee-form');
+  const addBtn  = m.querySelector('#trainee-add-btn');
+  const err     = m.querySelector('#t-err');
+  const editing = m.querySelector('#t-editing');
+  const fDisp   = m.querySelector('#t-display');
+  const fUname  = m.querySelector('#t-uname');
+  const fPass   = m.querySelector('#t-pass');
+  const saveBtn = m.querySelector('#t-save');
+  const showErr = (msg) => { err.textContent = msg; err.style.display='block'; };
+  const reset = () => {
+    editing.value=''; fDisp.value=''; fUname.value=''; fPass.value='';
+    fUname.disabled=false; fPass.placeholder = "they'll need this to log in";
+    err.style.display='none';
+  };
+  addBtn.onclick = () => { reset(); form.style.display=''; addBtn.style.display='none'; fDisp.focus(); };
+  m.querySelector('#t-cancel').onclick = () => { reset(); form.style.display='none'; addBtn.style.display=''; };
+  saveBtn.onclick = async () => {
+    err.style.display = 'none';
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try{
+      if(editing.value) await editTrainee(editing.value, fDisp.value, fPass.value);
+      else              await addTrainee(fUname.value, fPass.value, fDisp.value);
+      openSettings();   // re-render with updated list
+    }catch(e){
+      showErr(e.message);
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+    }
+  };
+  m.querySelectorAll('.trainee-edit').forEach(btn => {
+    btn.onclick = () => {
+      const uname = btn.closest('.trainee-item').dataset.uname;
+      const u = getUser(uname);
+      reset();
+      editing.value = uname;
+      fDisp.value   = u.displayName || '';
+      fUname.value  = uname; fUname.disabled = true;
+      fPass.placeholder = 'leave blank to keep current password';
+      form.style.display=''; addBtn.style.display='none'; fDisp.focus();
+    };
+  });
+  m.querySelectorAll('.trainee-remove').forEach(btn => {
+    btn.onclick = async () => {
+      const uname = btn.closest('.trainee-item').dataset.uname;
+      const u = getUser(uname);
+      const isBuiltin = !!BUILTIN_USERS[uname];
+      const msg = isBuiltin
+        ? `Unlink ${u.displayName||uname}? They'll stay logged in on their own device with their existing account — you just won't see them in your dropdown.`
+        : `Remove ${u.displayName||uname}? Their account will be deleted (they won't be able to log in anymore). Their workout data stays in the cloud in case you want to recover it later.`;
+      if(!confirm(msg)) return;
+      try{ await removeTrainee(uname); openSettings(); }
+      catch(e){ alert('Remove failed: '+e.message); }
+    };
+  });
+}
+
 function openSettings(){
   const key = localStorage.getItem(LS_USDA)||'';
   const ck  = localStorage.getItem(LS_CN)||'';
@@ -1731,7 +1890,8 @@ function openSettings(){
   const m = document.getElementById('s-modal');
   m.innerHTML = `
     <div class="modal-head"><h3>Settings</h3><button class="x" id="s-close">×</button></div>
-    <div class="block-title">Body-scan AI key</div>
+    ${traineesSectionHtml()}
+    <div class="block-title" style="margin-top:18px">Body-scan AI key</div>
     <div class="modal-sub">Paste an <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic API key</a>
       to enable photo-scanning of body-composition screenshots on the Body tab. <b>Set a low spend limit ($1/mo)</b>
       on the key first — scans cost ~$0.003 each. Leave blank to disable scanning (you can still type values by hand).</div>
@@ -1766,6 +1926,7 @@ function openSettings(){
     </div>
   `;
   m.querySelector('#s-close').onclick = ()=>document.getElementById('s-overlay').classList.remove('show');
+  wireTrainees(m);
   m.querySelector('#usda-save').onclick = ()=>{
     localStorage.setItem(LS_USDA, document.getElementById('usda-key').value.trim());
     localStorage.setItem(LS_CN, document.getElementById('cn-key').value.trim());
@@ -1844,7 +2005,7 @@ function renderProfileBar(){
   }
   const profiles = availableProfiles();
   const cur = currentProfile();
-  const label = u => (USERS[u] && USERS[u].displayName) || u;
+  const label = u => (getUser(u) && getUser(u).displayName) || u;
   const isSelf = u => u === currentUser();
   bar.style.display = '';
   bar.innerHTML = `
@@ -1855,6 +2016,54 @@ function renderProfileBar(){
     <span class="profile-tag">${isSelf(cur)?'Coach':'Trainee'}</span>
   `;
   bar.querySelector('#profile-sel').onchange = (e) => switchProfile(e.target.value);
+}
+
+// Mutations that change the trainer's roster. All persist immediately (no debounce) since
+// account additions/removals are rare and the user expects them to "stick" before they walk away.
+async function addTrainee(username, password, displayName){
+  username = (username||'').trim();
+  displayName = (displayName||'').trim();
+  if(!displayName)         throw new Error('Display name required');
+  if(!username)            throw new Error('Username required');
+  if(!password)            throw new Error('Password required');
+  if(!/^[A-Za-z0-9_-]{2,30}$/.test(username))
+                           throw new Error('Username 2-30 chars: letters, numbers, dash, underscore');
+  if(getUser(username))    throw new Error(`Username "${username}" is taken`);
+  dynUsers[username] = { password, type:'personal', displayName };
+  const me = currentUser();
+  const list = (dynTrainees[me] !== undefined)
+    ? dynTrainees[me].slice()
+    : ((BUILTIN_USERS[me] && BUILTIN_USERS[me].trainees) || []).slice();
+  if(!list.includes(username)) list.push(username);
+  dynTrainees[me] = list;
+  saveCachedUsers();
+  await pushUsers();
+  renderProfileBar();
+}
+async function editTrainee(username, displayName, newPassword){
+  if(!dynUsers[username]) throw new Error("Built-in users can't be edited from the app");
+  if(displayName) dynUsers[username].displayName = displayName.trim();
+  if(newPassword) dynUsers[username].password    = newPassword;
+  saveCachedUsers();
+  await pushUsers();
+  renderProfileBar();
+}
+async function removeTrainee(username){
+  const me = currentUser();
+  const list = (dynTrainees[me] !== undefined)
+    ? dynTrainees[me].slice()
+    : ((BUILTIN_USERS[me] && BUILTIN_USERS[me].trainees) || []).slice();
+  const idx = list.indexOf(username);
+  if(idx >= 0) list.splice(idx, 1);
+  dynTrainees[me] = list;
+  // Drop the auth entry too (built-in users like MPoretz survive — only the link is removed).
+  if(dynUsers[username]) delete dynUsers[username];
+  saveCachedUsers();
+  const wasViewing = currentProfile() === username;
+  if(wasViewing) localStorage.removeItem(LS_ACTIVE);
+  await pushUsers();
+  if(wasViewing) await switchProfile(me);
+  else renderProfileBar();
 }
 
 // Swap the active profile without a page reload. Flushes any pending push first so the
@@ -1915,11 +2124,14 @@ document.addEventListener('visibilitychange', async ()=>{
     if(profile && (profile._updated||0) > (DATA._updated||0)){
       DATA = profile; saveLocal(); renderAll(); stampUpdated(); setSync('ok','Synced');
     }
+    renderProfileBar();
   }
 });
 
+loadCachedUsers();
 if(!userMeta()){
   showLoginGate();
+  fetchAndCacheUsers();   // background refresh so newly-added users can log in here too
 } else {
   document.body.classList.remove('locked');
   renderProfileBar();
