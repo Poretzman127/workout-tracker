@@ -34,11 +34,29 @@ const USERS = {
   MPoretz:  { password:'Baloo123', type:'personal', displayName:'Max' },
   MaxCoach: { password:'Coach123', type:'trainer',  displayName:'Max (Coach)', trainees:['MPoretz'] },
 };
-const LS_USER = 'wt_currentUser';
-const currentUser    = () => localStorage.getItem(LS_USER) || '';
-const currentProfile = () => currentUser();   // step 2 introduces trainer-flip
-const userMeta       = () => USERS[currentUser()] || null;
-const lsDataKey      = () => LS_DATA_PREFIX + currentProfile();
+const LS_USER   = 'wt_currentUser';
+const LS_ACTIVE = 'wt_activeProfile';   // per-device — trainers can pick a trainee to view
+const currentUser  = () => localStorage.getItem(LS_USER) || '';
+const userMeta     = () => USERS[currentUser()] || null;
+// Profiles a trainer can choose between (own + linked trainees that still exist in USERS).
+// Personal accounts get back just [self], so the dropdown collapses to nothing.
+function availableProfiles(){
+  const me = userMeta();
+  if(!me) return [];
+  if(me.type === 'trainer'){
+    return [currentUser(), ...(me.trainees||[]).filter(t => USERS[t])];
+  }
+  return [currentUser()];
+}
+function currentProfile(){
+  const me = currentUser();
+  if(!me) return '';
+  const stored = localStorage.getItem(LS_ACTIVE) || '';
+  if(stored && availableProfiles().includes(stored)) return stored;
+  if(stored) localStorage.removeItem(LS_ACTIVE);   // clean up stale selection
+  return me;
+}
+const lsDataKey = () => LS_DATA_PREFIX + currentProfile();
 
 function attemptLogin(u, p){
   const meta = USERS[u];
@@ -1814,6 +1832,58 @@ function setupNureli(){
 /* ============================== WIRING ============================== */
 function renderAll(){ renderWorkouts(); renderNutrition(); renderBody(); }
 
+// Trainer-only profile switcher in the header. Hidden entirely for personal accounts.
+function renderProfileBar(){
+  const bar = document.getElementById('profile-bar');
+  if(!bar) return;
+  const me = userMeta();
+  if(!me || me.type !== 'trainer'){
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  const profiles = availableProfiles();
+  const cur = currentProfile();
+  const label = u => (USERS[u] && USERS[u].displayName) || u;
+  const isSelf = u => u === currentUser();
+  bar.style.display = '';
+  bar.innerHTML = `
+    <span class="profile-label">Viewing:</span>
+    <select id="profile-sel">
+      ${profiles.map(u => `<option value="${u}"${u===cur?' selected':''}>${label(u)}${isSelf(u)?' (you)':''}</option>`).join('')}
+    </select>
+    <span class="profile-tag">${isSelf(cur)?'Coach':'Trainee'}</span>
+  `;
+  bar.querySelector('#profile-sel').onchange = (e) => switchProfile(e.target.value);
+}
+
+// Swap the active profile without a page reload. Flushes any pending push first so the
+// outgoing profile doesn't lose unsynced edits, then reloads DATA from cache + remote.
+async function switchProfile(target){
+  if(!availableProfiles().includes(target)) return;
+  if(target === currentProfile()){ renderProfileBar(); return; }
+  // Flush pending push for the OUTGOING profile (currentProfile() is still old here).
+  if(pushTimer){
+    clearTimeout(pushTimer); pushTimer = null;
+    await pushRemote();
+  }
+  // Close any open modal so the user doesn't see stale content overlaid on the new profile.
+  document.querySelectorAll('.overlay.show').forEach(o => o.classList.remove('show'));
+  localStorage.setItem(LS_ACTIVE, target);
+  setSync('saving', 'Loading profile…');
+  DATA = emptyProfile();
+  loadLocal();
+  const {profile} = await fetchRemote();
+  if(profile && (profile._updated||0) >= (DATA._updated||0)){
+    DATA = profile; saveLocal();
+  }
+  ensureSeed(); ensureMetrics(); ensureAbsSeed();
+  ensurePlankHold(); ensureVolleyball(); ensureBikeMode();
+  renderAll(); stampUpdated();
+  renderProfileBar();
+  setSync('ok', 'Synced');
+}
+
 document.querySelectorAll('.tab').forEach(t=> t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));
@@ -1852,6 +1922,7 @@ if(!userMeta()){
   showLoginGate();
 } else {
   document.body.classList.remove('locked');
+  renderProfileBar();
   setupNureli();
   initSync();
 }
