@@ -97,10 +97,7 @@ async function fetchAndCacheUsers(){
 
 function validateAuth(u, p){
   const meta = getUser(u);
-  if(!meta) return false;
-  // Trainees have no password (meta.password is empty/undefined) — username alone is enough.
-  if(!meta.password) return true;
-  return meta.password === p;
+  return !!(meta && meta.password === p);
 }
 async function attemptLogin(u, p){
   if(validateAuth(u, p)){ localStorage.setItem(LS_USER, u); return true; }
@@ -1813,13 +1810,14 @@ function traineesSectionHtml(){
   }).join('');
   return `
     <div class="block-title" style="margin-top:6px">My Trainees</div>
-    <div class="modal-sub">Add a trainee to give them their own profile in this app. They can log in on their own device with just their username — no password required. You'll see them in the "Viewing" dropdown at the top.</div>
+    <div class="modal-sub">Add a trainee to give them their own profile in this app. They can log in on their own device with the username + password you set. You'll see them in the "Viewing" dropdown at the top.</div>
     <div class="trainees-list">${items || '<div class="trainee-empty">No trainees yet — add your first one below.</div>'}</div>
     <button class="btn ghost sm" id="trainee-add-btn">+ Add Trainee</button>
     <div class="trainee-form" id="trainee-form" style="display:none">
       <input type="hidden" id="t-editing">
       <div class="field" style="margin-bottom:8px"><label>Display name</label><input id="t-display" placeholder="e.g. Jane Smith" autocapitalize="words"></div>
       <div class="field" style="margin-bottom:8px"><label>Username (login)</label><input id="t-uname" placeholder="e.g. jane" autocapitalize="none" autocorrect="off"></div>
+      <div class="field" style="margin-bottom:8px"><label>Password</label><input id="t-pass" type="text" placeholder="they'll need this to log in"></div>
       <div class="trainee-err" id="t-err" style="display:none"></div>
       <div class="trainee-form-buttons">
         <button class="btn sm" id="t-save">Save</button>
@@ -1836,11 +1834,12 @@ function wireTrainees(m){
   const editing = m.querySelector('#t-editing');
   const fDisp   = m.querySelector('#t-display');
   const fUname  = m.querySelector('#t-uname');
+  const fPass   = m.querySelector('#t-pass');
   const saveBtn = m.querySelector('#t-save');
   const showErr = (msg) => { err.textContent = msg; err.style.display='block'; };
   const reset = () => {
-    editing.value=''; fDisp.value=''; fUname.value='';
-    fUname.disabled=false;
+    editing.value=''; fDisp.value=''; fUname.value=''; fPass.value='';
+    fUname.disabled=false; fPass.placeholder = "they'll need this to log in";
     err.style.display='none';
   };
   addBtn.onclick = () => { reset(); form.style.display=''; addBtn.style.display='none'; fDisp.focus(); };
@@ -1849,8 +1848,8 @@ function wireTrainees(m){
     err.style.display = 'none';
     saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
     try{
-      if(editing.value) await editTrainee(editing.value, fDisp.value);
-      else              await addTrainee(fUname.value, fDisp.value);
+      if(editing.value) await editTrainee(editing.value, fDisp.value, fPass.value);
+      else              await addTrainee(fUname.value, fPass.value, fDisp.value);
       openSettings();   // re-render with updated list
     }catch(e){
       showErr(e.message);
@@ -1865,6 +1864,7 @@ function wireTrainees(m){
       editing.value = uname;
       fDisp.value   = u.displayName || '';
       fUname.value  = uname; fUname.disabled = true;
+      fPass.placeholder = 'leave blank to keep current password';
       form.style.display=''; addBtn.style.display='none'; fDisp.focus();
     };
   });
@@ -2020,16 +2020,16 @@ function renderProfileBar(){
 
 // Mutations that change the trainer's roster. All persist immediately (no debounce) since
 // account additions/removals are rare and the user expects them to "stick" before they walk away.
-async function addTrainee(username, displayName){
+async function addTrainee(username, password, displayName){
   username = (username||'').trim();
   displayName = (displayName||'').trim();
   if(!displayName)         throw new Error('Display name required');
   if(!username)            throw new Error('Username required');
+  if(!password)            throw new Error('Password required');
   if(!/^[A-Za-z0-9_-]{2,30}$/.test(username))
                            throw new Error('Username 2-30 chars: letters, numbers, dash, underscore');
   if(getUser(username))    throw new Error(`Username "${username}" is taken`);
-  // No password — trainees log in with username alone.
-  dynUsers[username] = { type:'personal', displayName, password:'' };
+  dynUsers[username] = { type:'personal', displayName, password };
   const me = currentUser();
   const list = (dynTrainees[me] !== undefined)
     ? dynTrainees[me].slice()
@@ -2040,9 +2040,10 @@ async function addTrainee(username, displayName){
   await pushUsers();
   renderProfileBar();
 }
-async function editTrainee(username, displayName){
+async function editTrainee(username, displayName, newPassword){
   if(!dynUsers[username]) throw new Error("Built-in users can't be edited from the app");
   if(displayName) dynUsers[username].displayName = displayName.trim();
+  if(newPassword) dynUsers[username].password    = newPassword;
   saveCachedUsers();
   await pushUsers();
   renderProfileBar();
