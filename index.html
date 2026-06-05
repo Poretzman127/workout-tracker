@@ -16,10 +16,10 @@
 <div class="login-overlay" id="login-overlay">
   <div class="login-card">
     <h2>Workout Tracker</h2>
-    <div class="login-sub">Sign in to continue.</div>
+    <div class="login-sub">Sign in to continue. <span style="display:block;margin-top:4px;font-size:12px">Trainees: just enter your username — no password.</span></div>
     <form id="login-form">
       <div class="field"><label>Username</label><input id="login-user" autocomplete="username" autocapitalize="none" autocorrect="off" required></div>
-      <div class="field"><label>Password</label><input id="login-pass" type="password" autocomplete="current-password" required></div>
+      <div class="field"><label>Password <span style="color:var(--muted);font-weight:400">(blank for trainees)</span></label><input id="login-pass" type="password" autocomplete="current-password"></div>
       <div class="login-err" id="login-err"></div>
       <button type="submit">Sign in</button>
     </form>
