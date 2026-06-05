@@ -572,6 +572,59 @@ function workoutsByGroup(gid){
       return a.localeCompare(b);                     // never logged: alphabetical
     });
 }
+// One workout's <tr> in the per-group table. Dispatches on cardio/hold/repsOnly/default-lift.
+function workoutRowEl(name, w, cardio){
+  const dts = sortedDates(w.sessions);
+  const last = dts[dts.length-1];
+  const sets = last ? w.sessions[last] : [];
+  const hold = isHold(w), repsOnly = isRepsOnly(w);
+  const cm = cardio ? cardioMode(w) : null;
+  const hl = last ? setHighlight(w, sets) : '';
+  const setsHtml = last
+    ? sets.map((s,si)=>`<span class="set${(si===sets.length-1&&hl)?' '+hl:''}">${setText(w,s)}</span>`).join('')
+    : '<span class="muted">—</span>';
+  const burnCal = cardio && last ? Math.round(sessionBurn(name, w, sets, last)) : 0;
+  const burnLine = burnCal>0 ? `<div class="out-sub">🔥 ${burnCal.toLocaleString()} cal</div>` : '';
+  const outCell = !last ? '<span class="muted">—</span>'
+    : cardio   ? `<span class="out-val">${cm.headline(sets,w)}</span> <span class="muted">${cm.headlineUnit}</span>${burnLine}`
+    : hold     ? `<span class="out-val">${fmtDur(sessionBestHold(sets))}</span> <span class="muted">best</span>`
+    : repsOnly ? `<span class="out-val">${sessionReps(sets).toLocaleString()}</span> <span class="muted">reps</span>`
+               : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span> <span class="muted">lbs</span>`;
+  const lt = last ? lastSetTime(sets) : null;
+  const outLabel = cardio ? cm.headlineCol : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
+  return el(`<tr>
+    <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
+        <span class="info-ic" data-demo="${encodeURIComponent(name)}" title="How to do it">ℹ</span></td>
+    <td data-label="${outLabel}">${outCell}</td>
+    <td data-label="Last">${last?fmtDate(last)+(lt?` · ${fmtTime(lt)}`:''):'<span class="muted">—</span>'}</td>
+    <td class="sets-cell" data-label="Sets">${setsHtml}</td>
+    <td class="c-del"><button class="del" data-del="${encodeURIComponent(name)}" title="Delete">×</button></td>
+  </tr>`);
+}
+// Cardio-only Apple Health import block at the bottom of the cardio section.
+function cardioHealthUploaderEl(){
+  return el(`<div class="uploader" style="margin-top:14px">
+    <div style="font-size:14px;font-weight:700">⬆ Import steps &amp; distance from Apple Health</div>
+    <p>Health app → profile → <b>Export All Health Data</b> → unzip → upload <b>export.xml</b>.
+       Sums your daily steps &amp; walking distance (and weight). Big files stream fine.</p>
+    <div class="field" style="max-width:220px;margin:0 auto 10px"><label>Only import on/after</label><input type="date" id="c-from" value="2025-09-01"></div>
+    <input type="file" id="c-file" accept=".xml">
+    <div id="c-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+  </div>`);
+}
+// Section header (collapsible) for one muscle group / cardio.
+function workoutSectionHeadEl(g, names){
+  const lastD = groupLastDate(g.id);
+  const lastOut = groupLastOutput(g.id);
+  return el(`<div class="section-head" data-toggle="${g.id}">
+    <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
+    <h2>${g.name}</h2><span class="pill">${names.length}</span>
+    <span class="sec-meta">
+      <span class="sec-date${lastD?'':' none'}">${lastD?fmtDate(lastD):'no sessions'}</span>
+      ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">${Math.round(lastOut).toLocaleString()}</span>`:''}
+    </span>
+  </div>`);
+}
 function renderWorkouts(){
   const root = document.getElementById('view-workouts');
   root.innerHTML = '';
@@ -583,20 +636,10 @@ function renderWorkouts(){
   for(const g of GROUPS){
     const names = workoutsByGroup(g.id);
     const cardio = g.kind==='cardio';
-    const lastD = groupLastDate(g.id);
-    const lastOut = groupLastOutput(g.id);
     const sec = el(`<div class="section"></div>`);
-    sec.appendChild(el(`<div class="section-head" data-toggle="${g.id}">
-      <span class="caret">${collapsed[g.id]?'▸':'▾'}</span>
-      <h2>${g.name}</h2><span class="pill">${names.length}</span>
-      <span class="sec-meta">
-        <span class="sec-date${lastD?'':' none'}">${lastD?fmtDate(lastD):'no sessions'}</span>
-        ${lastOut?`<span class="sec-output" title="Total output across exercises done on ${fmtDate(lastD)}">${Math.round(lastOut).toLocaleString()}</span>`:''}
-      </span>
-    </div>`));
-    if(!collapsed[g.id]){
+    sec.appendChild(workoutSectionHeadEl(g, names));
+    if(!collapsed[g.id])
       sec.appendChild(el(`<button class="btn ghost sm add-full" data-add="${g.id}">+ Add ${cardio?'cardio':'workout'}</button>`));
-    }
     const body = el(`<div class="section-body"${collapsed[g.id]?' style="display:none"':''}></div>`);
     const wrap = el(`<div class="table-wrap"></div>`);
     if(!names.length){
@@ -611,48 +654,12 @@ function renderWorkouts(){
       const tb = t.querySelector('tbody');
       for(const name of names){
         const w = DATA.workouts[name];
-        if(isMetric(w)){ tb.appendChild(metricRow(name, w)); continue; }
-        const dts = sortedDates(w.sessions);
-        const last = dts[dts.length-1];
-        const sets = last ? w.sessions[last] : [];
-        const hold = isHold(w), repsOnly = isRepsOnly(w);
-        const cm = cardio ? cardioMode(w) : null;
-        const hl = last ? setHighlight(w, sets) : '';
-        const setsHtml = last
-          ? sets.map((s,si)=>`<span class="set${(si===sets.length-1&&hl)?' '+hl:''}">${setText(w,s)}</span>`).join('')
-          : '<span class="muted">—</span>';
-        const burnCal = cardio && last ? Math.round(sessionBurn(name, w, sets, last)) : 0;
-        const burnLine = burnCal>0 ? `<div class="out-sub">🔥 ${burnCal.toLocaleString()} cal</div>` : '';
-        const outCell = !last ? '<span class="muted">—</span>'
-          : cardio   ? `<span class="out-val">${cm.headline(sets,w)}</span> <span class="muted">${cm.headlineUnit}</span>${burnLine}`
-          : hold     ? `<span class="out-val">${fmtDur(sessionBestHold(sets))}</span> <span class="muted">best</span>`
-          : repsOnly ? `<span class="out-val">${sessionReps(sets).toLocaleString()}</span> <span class="muted">reps</span>`
-                     : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span> <span class="muted">lbs</span>`;
-        const lt = last ? lastSetTime(sets) : null;
-        const outLabel = cardio ? cm.headlineCol : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
-        const tr = el(`<tr>
-          <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
-              <span class="info-ic" data-demo="${encodeURIComponent(name)}" title="How to do it">ℹ</span></td>
-          <td data-label="${outLabel}">${outCell}</td>
-          <td data-label="Last">${last?fmtDate(last)+(lt?` · ${fmtTime(lt)}`:''):'<span class="muted">—</span>'}</td>
-          <td class="sets-cell" data-label="Sets">${setsHtml}</td>
-          <td class="c-del"><button class="del" data-del="${encodeURIComponent(name)}" title="Delete">×</button></td>
-        </tr>`);
-        tb.appendChild(tr);
+        tb.appendChild(isMetric(w) ? metricRow(name, w) : workoutRowEl(name, w, cardio));
       }
       wrap.appendChild(t);
     }
     body.appendChild(wrap);
-    if(cardio){
-      body.appendChild(el(`<div class="uploader" style="margin-top:14px">
-        <div style="font-size:14px;font-weight:700">⬆ Import steps &amp; distance from Apple Health</div>
-        <p>Health app → profile → <b>Export All Health Data</b> → unzip → upload <b>export.xml</b>.
-           Sums your daily steps &amp; walking distance (and weight). Big files stream fine.</p>
-        <div class="field" style="max-width:220px;margin:0 auto 10px"><label>Only import on/after</label><input type="date" id="c-from" value="2025-09-01"></div>
-        <input type="file" id="c-file" accept=".xml">
-        <div id="c-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
-      </div>`));
-    }
+    if(cardio) body.appendChild(cardioHealthUploaderEl());
     sec.appendChild(body);
     root.appendChild(sec);
   }
@@ -1127,72 +1134,87 @@ function foodMacros(r){
 function rowMacros(r){ const m=foodMacros(r), s=r.servings||1; return {cal:m.cal*s, p:m.p*s, c:m.c*s, f:m.f*s, fib:m.fib*s, sod:m.sod*s}; }
 // timestamp a food only when logging for TODAY (back-dated entries get no time)
 function stampNow(){ return nutDay===todayStr() ? Date.now() : undefined; }
+// ============================== NUTRITION TAB ==============================
+// Six-card row of daily totals (cal/protein/carbs/fat/fiber/sodium) with goal indicators.
+function nutritionTotalsHtml(tot){
+  const g = goals();
+  return `<div class="totals">
+    <div class="tcard cal"><div class="tn">Calories</div><div class="tv">${Math.round(tot.cal)}</div>${goalLine(tot.cal, g.cal, false, '')}</div>
+    <div class="tcard p"><div class="tn">Protein</div><div class="tv">${Math.round(tot.p)}<small style="font-size:11px">g</small></div>${goalLine(tot.p, g.p, true, 'g')}</div>
+    <div class="tcard c"><div class="tn">Carbs</div><div class="tv">${Math.round(tot.c)}<small style="font-size:11px">g</small></div>${goalLine(tot.c, g.c, false, 'g')}</div>
+    <div class="tcard f"><div class="tn">Fat</div><div class="tv">${Math.round(tot.f)}<small style="font-size:11px">g</small></div>${goalLine(tot.f, g.f, false, 'g')}</div>
+    <div class="tcard"><div class="tn">Fiber</div><div class="tv">${Math.round(tot.fib)}<small style="font-size:11px">g</small></div>${goalLine(tot.fib, g.fib, true, 'g')}</div>
+    <div class="tcard"><div class="tn">Sodium</div><div class="tv">${Math.round(tot.sod)}<small style="font-size:11px">mg</small></div>${goalLine(tot.sod, g.sod, false, 'mg')}</div>
+  </div>`;
+}
+// Food input row — natural-language meal if CN key is set, else search-and-pick.
+function foodInputHtml(hasCN){
+  if(hasCN) return `<div class="food-input">
+    <input id="food-q" placeholder="What did you eat? e.g. 2 eggs and a banana">
+    <button class="btn" id="food-add">+ Add</button>
+    <button class="btn ghost" id="food-manual" title="Enter macros by hand">✏️ Manual</button>
+  </div>`;
+  return `<div class="banner"><b>Tip:</b> add a free CalorieNinjas key in ⚙ Settings to log meals in plain words
+      (“2 eggs and a banana”). Until then, search one food at a time below.</div>
+     <div class="food-input">
+      <input id="food-q" placeholder="Search a food — e.g. chicken breast, banana">
+      <button class="btn" id="food-search">Search</button>
+      <button class="btn ghost" id="food-manual" title="Enter macros by hand">✏️ Manual</button>
+    </div>`;
+}
+// Hidden manual-entry form for foods CalorieNinjas / USDA can't resolve.
+function manualEntryFormHtml(){
+  return `<div id="manual-form" class="manual-form" style="display:none">
+    <div class="field-row">
+      <div class="field" style="flex:1;min-width:150px"><label>Food name</label><input id="man-name" placeholder="e.g. Grandma’s lasagna"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Calories</label><input class="num" id="man-cal" type="number" inputmode="numeric" placeholder="0"></div>
+      <div class="field"><label>Protein (g)</label><input class="num" id="man-p" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Carbs (g)</label><input class="num" id="man-c" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Fat (g)</label><input class="num" id="man-f" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Fiber (g)</label><input class="num" id="man-fib" type="number" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Sodium (mg)</label><input class="num" id="man-sod" type="number" inputmode="numeric" placeholder="0"></div>
+      <button class="btn" id="man-add">Add</button>
+    </div>
+  </div>`;
+}
+// Today's food rows (or empty-state row).
+function foodTableBodyHtml(rows){
+  if(!rows.length) return `<tr><td colspan="11" class="empty">Nothing logged. Search a food above to add it.</td></tr>`;
+  return rows.map((r,i)=>{const m=rowMacros(r); return `<tr>
+    <td>${r.desc}</td>
+    <td class="muted" style="font-size:12px;white-space:nowrap">${r.t?fmtTime(r.t):'—'}</td>
+    <td>${r.per100?`<input class="num gin" data-g="${i}" type="number" inputmode="decimal" value="${r.g}" style="width:66px;padding:4px 6px">`:'<span class="muted">—</span>'}</td>
+    <td><input class="num sin" data-s="${i}" type="number" inputmode="decimal" step="any" min="0" value="${r.servings||1}" style="width:54px;padding:4px 6px"></td>
+    <td>${Math.round(m.cal)}</td><td>${Math.round(m.p)}</td>
+    <td>${Math.round(m.c)}</td><td>${Math.round(m.f)}</td>
+    <td>${Math.round(m.fib)}</td><td>${Math.round(m.sod)}</td>
+    <td><button class="del" data-fdel="${i}">×</button></td></tr>`;}).join('');
+}
 function renderNutrition(){
   const root = document.getElementById('view-nutrition');
   const day = nutDay;
   const rows = DATA.food[day] || [];
   const tot = rows.reduce((a,r)=>{const m=rowMacros(r);return {cal:a.cal+m.cal,p:a.p+m.p,c:a.c+m.c,f:a.f+m.f,fib:a.fib+m.fib,sod:a.sod+m.sod};},{cal:0,p:0,c:0,f:0,fib:0,sod:0});
-  const burn = dayBurn(day);
+  const hasCN = !!cnKey();
   root.innerHTML = `
     <div class="day-nav">
       <button class="arrow" id="d-prev">‹</button>
       <span class="date" id="d-label">${fmtDateLong(day)}${day===todayStr()?' · Today':''}</span>
       <button class="arrow" id="d-next">›</button>
     </div>
-    ${burnBarHtml(burn, tot)}
-    <div class="totals">
-      <div class="tcard cal"><div class="tn">Calories</div><div class="tv">${Math.round(tot.cal)}</div>${goalLine(tot.cal, goals().cal, false, '')}</div>
-      <div class="tcard p"><div class="tn">Protein</div><div class="tv">${Math.round(tot.p)}<small style="font-size:11px">g</small></div>${goalLine(tot.p, goals().p, true, 'g')}</div>
-      <div class="tcard c"><div class="tn">Carbs</div><div class="tv">${Math.round(tot.c)}<small style="font-size:11px">g</small></div>${goalLine(tot.c, goals().c, false, 'g')}</div>
-      <div class="tcard f"><div class="tn">Fat</div><div class="tv">${Math.round(tot.f)}<small style="font-size:11px">g</small></div>${goalLine(tot.f, goals().f, false, 'g')}</div>
-      <div class="tcard"><div class="tn">Fiber</div><div class="tv">${Math.round(tot.fib)}<small style="font-size:11px">g</small></div>${goalLine(tot.fib, goals().fib, true, 'g')}</div>
-      <div class="tcard"><div class="tn">Sodium</div><div class="tv">${Math.round(tot.sod)}<small style="font-size:11px">mg</small></div>${goalLine(tot.sod, goals().sod, false, 'mg')}</div>
-    </div>
-    ${cnKey()
-      ? `<div class="food-input">
-          <input id="food-q" placeholder="What did you eat? e.g. 2 eggs and a banana">
-          <button class="btn" id="food-add">+ Add</button>
-          <button class="btn ghost" id="food-manual" title="Enter macros by hand">✏️ Manual</button>
-        </div>`
-      : `<div class="banner"><b>Tip:</b> add a free CalorieNinjas key in ⚙ Settings to log meals in plain words
-          (“2 eggs and a banana”). Until then, search one food at a time below.</div>
-         <div class="food-input">
-          <input id="food-q" placeholder="Search a food — e.g. chicken breast, banana">
-          <button class="btn" id="food-search">Search</button>
-          <button class="btn ghost" id="food-manual" title="Enter macros by hand">✏️ Manual</button>
-        </div>`}
-    <div id="manual-form" class="manual-form" style="display:none">
-      <div class="field-row">
-        <div class="field" style="flex:1;min-width:150px"><label>Food name</label><input id="man-name" placeholder="e.g. Grandma’s lasagna"></div>
-      </div>
-      <div class="field-row">
-        <div class="field"><label>Calories</label><input class="num" id="man-cal" type="number" inputmode="numeric" placeholder="0"></div>
-        <div class="field"><label>Protein (g)</label><input class="num" id="man-p" type="number" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>Carbs (g)</label><input class="num" id="man-c" type="number" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>Fat (g)</label><input class="num" id="man-f" type="number" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>Fiber (g)</label><input class="num" id="man-fib" type="number" inputmode="decimal" placeholder="0"></div>
-        <div class="field"><label>Sodium (mg)</label><input class="num" id="man-sod" type="number" inputmode="numeric" placeholder="0"></div>
-        <button class="btn" id="man-add">Add</button>
-      </div>
-    </div>
+    ${burnBarHtml(dayBurn(day), tot)}
+    ${nutritionTotalsHtml(tot)}
+    ${foodInputHtml(hasCN)}
+    ${manualEntryFormHtml()}
     <div id="food-results"></div>
     <div class="table-wrap">
       <table><thead><tr><th>Food</th><th>Time</th><th>Grams</th><th>Servings</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th><th>Fiber</th><th>Sodium</th><th></th></tr></thead>
-      <tbody id="food-body">${
-        rows.length ? rows.map((r,i)=>{const m=rowMacros(r);return `<tr>
-          <td>${r.desc}</td>
-          <td class="muted" style="font-size:12px;white-space:nowrap">${r.t?fmtTime(r.t):'—'}</td>
-          <td>${r.per100?`<input class="num gin" data-g="${i}" type="number" inputmode="decimal" value="${r.g}" style="width:66px;padding:4px 6px">`:'<span class="muted">—</span>'}</td>
-          <td><input class="num sin" data-s="${i}" type="number" inputmode="decimal" step="any" min="0" value="${r.servings||1}" style="width:54px;padding:4px 6px"></td>
-          <td>${Math.round(m.cal)}</td><td>${Math.round(m.p)}</td>
-          <td>${Math.round(m.c)}</td><td>${Math.round(m.f)}</td>
-          <td>${Math.round(m.fib)}</td><td>${Math.round(m.sod)}</td>
-          <td><button class="del" data-fdel="${i}">×</button></td></tr>`;}).join('')
-        : `<tr><td colspan="11" class="empty">Nothing logged. Search a food above to add it.</td></tr>`
-      }</tbody></table>
+      <tbody id="food-body">${foodTableBodyHtml(rows)}</tbody></table>
     </div>
     <div style="margin-top:10px;font-size:11.5px;color:var(--muted)">
-      ${cnKey()
+      ${hasCN
         ? 'Type meals in plain words: CalorieNinjas reads the foods &amp; portions, USDA fills in calories &amp; protein. A USDA key (⚙ Settings) is recommended so multi-food meals don’t hit the shared demo limit.'
         : 'Food data: USDA FoodData Central (shared demo key — add your own free key in ⚙ Settings if it rate-limits).'}
     </div>`;
@@ -1387,6 +1409,55 @@ function compDatesFor(key){ return Object.keys(DATA.comp||{}).filter(d=>DATA.com
 function compSeries(key){ return compDatesFor(key).map(d=>({label:fmtDate(d), value:+DATA.comp[d][key]})); }
 function compLatest(key){ const ds=compDatesFor(key); if(!ds.length) return null; const d=ds[ds.length-1]; return {date:d, value:+DATA.comp[d][key]}; }
 function fmtComp(key, v){ return v==null?'—':(+v).toLocaleString(undefined,{minimumFractionDigits:BODYCOMP[key].dec, maximumFractionDigits:BODYCOMP[key].dec}); }
+// ============================== BODY TAB ==============================
+// Composition card grid (weight + every body-comp metric that has data).
+function bodyCompCardsHtml(latest){
+  const w = `<div class="bc-card"><div class="tn">Weight</div><div class="tv">${latest!=null?latest.toFixed(1):'—'}<small> lb</small></div></div>`;
+  const comp = Object.keys(BODYCOMP).map(k=>{
+    const l = compLatest(k); if(!l) return '';
+    return `<div class="bc-card"><div class="tn">${BODYCOMP[k].label}</div><div class="tv">${fmtComp(k,l.value)}<small> ${BODYCOMP[k].unit}</small></div></div>`;
+  }).join('');
+  return `<div class="bc-grid">${w}${comp}</div>`;
+}
+// Screenshot scanner uploader. Shows an inline API-key field if no key is set on this device.
+function bodyScannerHtml(){
+  return `<div class="uploader" style="margin-top:18px">
+    <div style="font-size:15px;font-weight:700">📷 Scan a body-composition screenshot</div>
+    <p>Upload a screenshot of your smart-scale app and I'll read the numbers into the form below — then check &amp; Save.</p>
+    ${aiKey()?'':`<div class="field" style="margin-bottom:10px"><label>Anthropic API key <span style="color:var(--muted);font-weight:400">(saves on this device — get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>)</span></label><input id="bc-aikey" placeholder="sk-ant-…" autocomplete="off"></div>`}
+    <input type="file" id="bc-file" accept="image/*">
+    <div id="bc-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+  </div>`;
+}
+// Collapsible "Manual entry + Apple Health import" section. Prefills from a pendingScan or existing values.
+function bodyManualSectionHtml(today, logOpen){
+  const cur = DATA.comp[today] || {};
+  const pv = k => pendingScan && pendingScan[k]!=null ? pendingScan[k] : (cur[k]!=null ? cur[k] : '');
+  const wv = pendingScan && pendingScan.weight!=null ? pendingScan.weight : (DATA.body[today]!=null ? DATA.body[today] : '');
+  const compInputs = Object.keys(BODYCOMP).map(k=>
+    `<div class="field"><label>${BODYCOMP[k].label}${BODYCOMP[k].unit?' ('+BODYCOMP[k].unit+')':''}</label>
+      <input class="num bc-in" data-k="${k}" type="number" step="any" inputmode="decimal" value="${pv(k)}"></div>`).join('');
+  return `<div class="block-title" id="bc-toggle" style="margin-top:18px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
+    <span style="font-size:11px;width:10px">${logOpen?'▾':'▸'}</span> Manual entry &amp; Apple Health import
+  </div>
+  <div id="bc-collapse" style="${logOpen?'':'display:none'}">
+    <div class="block-title">Log body data for <input id="bc-date" type="date" value="${today}" style="padding:4px 8px;font-size:13px"></div>
+    <div class="field-row">
+      <div class="field"><label>Weight (lb)</label><input class="num" id="bc-weight" type="number" step="any" inputmode="decimal" value="${wv}" placeholder="182.0"></div>
+      ${compInputs}
+    </div>
+    <button class="btn" id="bc-save" style="margin-top:6px">💾 Save body data</button>
+
+    <div class="uploader" style="margin-top:22px">
+      <div style="font-size:15px;font-weight:700">⬆ Import Apple Health data</div>
+      <p>Health app → your profile → <b>Export All Health Data</b> → unzip → upload the <b>export.xml</b> here.<br>
+         I'll pull weight (one per day) plus daily steps &amp; walking distance on/after the date below. Big files are fine — it streams.</p>
+      <div class="field" style="max-width:220px;margin-bottom:10px"><label>Only import readings on/after</label><input type="date" id="b-from" value="2026-05-20"></div>
+      <input type="file" id="b-file" accept=".xml">
+      <div id="b-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+    </div>
+  </div>`;
+}
 function renderBody(){
   DATA.comp = DATA.comp || {};
   const root = document.getElementById('view-body');
@@ -1395,32 +1466,18 @@ function renderBody(){
   const today = todayStr();
 
   // chart series — weight or a chosen comp metric
-  let pts, chartColor, chartUnit;
-  if(bodyMetric==='weight'){ pts = dts.map(d=>({label:fmtDate(d), value:DATA.body[d]})); chartColor='#34d399'; chartUnit='lb'; }
-  else { pts = compSeries(bodyMetric); chartColor=BODYCOMP[bodyMetric].color; chartUnit=BODYCOMP[bodyMetric].unit; }
-
-  // composition cards (weight + each metric that has data)
-  const wCard = `<div class="bc-card"><div class="tn">Weight</div><div class="tv">${latest!=null?latest.toFixed(1):'—'}<small> lb</small></div></div>`;
-  const compCards = Object.keys(BODYCOMP).map(k=>{
-    const l = compLatest(k); if(!l) return '';
-    return `<div class="bc-card"><div class="tn">${BODYCOMP[k].label}</div><div class="tv">${fmtComp(k,l.value)}<small> ${BODYCOMP[k].unit}</small></div></div>`;
-  }).join('');
+  let pts, chartColor;
+  if(bodyMetric==='weight'){ pts = dts.map(d=>({label:fmtDate(d), value:DATA.body[d]})); chartColor='#34d399'; }
+  else { pts = compSeries(bodyMetric); chartColor=BODYCOMP[bodyMetric].color; }
 
   // metric selector for the chart
   const selOpts = `<option value="weight"${bodyMetric==='weight'?' selected':''}>Weight</option>` +
     Object.keys(BODYCOMP).map(k=>`<option value="${k}"${bodyMetric===k?' selected':''}>${BODYCOMP[k].label}</option>`).join('');
 
-  // log/review form — prefill from a pending scan, else existing values for the chosen date
-  const cur = DATA.comp[today] || {};
-  const pv = k => pendingScan && pendingScan[k]!=null ? pendingScan[k] : (cur[k]!=null ? cur[k] : '');
-  const wv = pendingScan && pendingScan.weight!=null ? pendingScan.weight : (DATA.body[today]!=null ? DATA.body[today] : '');
-  const compInputs = Object.keys(BODYCOMP).map(k=>
-    `<div class="field"><label>${BODYCOMP[k].label}${BODYCOMP[k].unit?' ('+BODYCOMP[k].unit+')':''}</label>
-      <input class="num bc-in" data-k="${k}" type="number" step="any" inputmode="decimal" value="${pv(k)}"></div>`).join('');
   const logOpen = bodyLogOpen || !!pendingScan;   // a finished scan auto-expands so the prefilled form shows
 
   root.innerHTML = `
-    <div class="bc-grid">${wCard}${compCards || ''}</div>
+    ${bodyCompCardsHtml(latest)}
 
     <div class="block-title" style="display:flex;align-items:center;gap:8px">
       <span>Trend</span>
@@ -1428,34 +1485,8 @@ function renderBody(){
     </div>
     <div class="bigchart">${pts.length?bigLine(pts,chartColor):`<div class="empty">No ${bodyMetric==='weight'?'weight':BODYCOMP[bodyMetric].label} data yet.</div>`}</div>
 
-    <div class="uploader" style="margin-top:18px">
-      <div style="font-size:15px;font-weight:700">📷 Scan a body-composition screenshot</div>
-      <p>Upload a screenshot of your smart-scale app and I'll read the numbers into the form below — then check &amp; Save.</p>
-      ${aiKey()?'':`<div class="field" style="margin-bottom:10px"><label>Anthropic API key <span style="color:var(--muted);font-weight:400">(saves on this device — get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>)</span></label><input id="bc-aikey" placeholder="sk-ant-…" autocomplete="off"></div>`}
-      <input type="file" id="bc-file" accept="image/*">
-      <div id="bc-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
-    </div>
-
-    <div class="block-title" id="bc-toggle" style="margin-top:18px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
-      <span style="font-size:11px;width:10px">${logOpen?'▾':'▸'}</span> Manual entry &amp; Apple Health import
-    </div>
-    <div id="bc-collapse" style="${logOpen?'':'display:none'}">
-      <div class="block-title">Log body data for <input id="bc-date" type="date" value="${today}" style="padding:4px 8px;font-size:13px"></div>
-      <div class="field-row">
-        <div class="field"><label>Weight (lb)</label><input class="num" id="bc-weight" type="number" step="any" inputmode="decimal" value="${wv}" placeholder="182.0"></div>
-        ${compInputs}
-      </div>
-      <button class="btn" id="bc-save" style="margin-top:6px">💾 Save body data</button>
-
-      <div class="uploader" style="margin-top:22px">
-        <div style="font-size:15px;font-weight:700">⬆ Import Apple Health data</div>
-        <p>Health app → your profile → <b>Export All Health Data</b> → unzip → upload the <b>export.xml</b> here.<br>
-           I'll pull weight (one per day) plus daily steps &amp; walking distance on/after the date below. Big files are fine — it streams.</p>
-        <div class="field" style="max-width:220px;margin-bottom:10px"><label>Only import readings on/after</label><input type="date" id="b-from" value="2026-05-20"></div>
-        <input type="file" id="b-file" accept=".xml">
-        <div id="b-status" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
-      </div>
-    </div>`;
+    ${bodyScannerHtml()}
+    ${bodyManualSectionHtml(today, logOpen)}`;
 
   root.querySelector('#bc-toggle').onclick = ()=>{
     bodyLogOpen = !bodyLogOpen;
