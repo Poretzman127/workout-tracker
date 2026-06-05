@@ -330,7 +330,7 @@ const SEED = {
   'chest-tricep':['Barbell Bench Press','Incline Dumbbell Press','Machine Chest Fly','Tricep Pushdown','Overhead Tricep Extension','Dips'],
   'legs':        ['Back Squat','Leg Press','Romanian Deadlift','Leg Extension','Seated Leg Curl','Calf Raise'],
   'abs':         ['Cable Crunch','Hanging Leg Raise','Plank','Russian Twist','Bicycle Crunch','Ab Wheel Rollout','Decline Sit-Up'],
-  'cardio':      ['Treadmill','Stationary Bike','Rowing Machine','Elliptical','Stairmaster','Volleyball'],
+  'cardio':      ['Treadmill','Bike','Rowing Machine','Elliptical','Stairmaster','Volleyball'],
 };
 const demoUrl = name => `https://www.youtube.com/results?search_query=${encodeURIComponent(name+' proper form')}`;
 
@@ -396,6 +396,8 @@ function sessionReps(sets){ return (sets||[]).reduce((a,s)=>a + (s.r||0), 0); }
 // dumbbell = two separate weights → double the volume. rowing stores w=distance(km), r=time(min); pace=km/min, no output.
 function dbMult(w){ return (w && w.db) ? 2 : 1; }
 function isRow(w){ return !!(w && w.row); }
+// bike mode: w=distance(miles), r=time(min), shown as MPH pace; no output number
+function isBike(w){ return !!(w && w.bike && groupKind(w.group)==='cardio'); }
 // time-only cardio (sports like volleyball/basketball): just log minutes, no speed/level
 function isTimeOnly(w){ return !!(w && w.timeOnly && groupKind(w.group)==='cardio'); }
 // timed-hold mode (planks etc.): store r=time(min, from min:sec), w=optional added weight (0=bodyweight)
@@ -410,6 +412,11 @@ function sessionDist(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0), 0); } 
 function pace(s){ return (s.r>0) ? (s.w||0)/1000/s.r : 0; }                           // km/min (from meters)
 function sessionPace(sets){ const t=sessionReps(sets); return t>0 ? sessionDist(sets)/1000/t : 0; }
 function fmtPace(p){ return (Math.round(p*1000)/1000).toLocaleString(undefined,{maximumFractionDigits:3}); }
+// bike: w=miles, r=min → mph
+function sessionMiles(sets){ return (sets||[]).reduce((a,s)=>a + (s.w||0), 0); }
+function mph(s){ return (s.r>0) ? (s.w||0)*60/s.r : 0; }
+function sessionMph(sets){ const t=sessionReps(sets); return t>0 ? sessionMiles(sets)*60/t : 0; }
+function fmtMph(p){ return (Math.round(p*10)/10).toLocaleString(undefined,{maximumFractionDigits:1}); }
 // decimal minutes → "mm:ss" for rowing time display
 function fmtDur(min){ let m=Math.floor(min||0), s=Math.round(((min||0)-m)*60); if(s===60){m++;s=0;} return `${m}:${String(s).padStart(2,'0')}`; }
 // "mm:ss" entered as separate fields → decimal minutes stored in r
@@ -418,6 +425,7 @@ function minSecToMin(mn, sc){ return (parseFloat(mn)||0) + (parseFloat(sc)||0)/6
 function setText(w, s){
   if(groupKind(w.group)==='cardio')
     return isRow(w) ? `${s.w}m in ${fmtDur(s.r)} · ${fmtPace(pace(s))} km/min`
+         : isBike(w) ? `${s.w} mi in ${fmtDur(s.r)} · ${fmtMph(mph(s))} mph`
          : isTimeOnly(w) ? `${s.r} min`
          : `${s.r}min @ ${s.w}`;
   if(isHold(w)) return `${fmtDur(s.r)}${s.w?` · ${s.w} lb`:''}`;
@@ -426,13 +434,13 @@ function setText(w, s){
 }
 // read-only line for a set: {desc, so(output)} — shared by today's list + prior-day view
 function setDescSo(w, s){
-  const cardio=groupKind(w.group)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
+  const cardio=groupKind(w.group)==='cardio', row=isRow(w), bike=isBike(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
   const desc = cardio
-    ? (row ? `${s.w} m in ${fmtDur(s.r)}` : timeOnly ? `${s.r} min` : `${s.r} min @ level ${s.w}`)
+    ? (row ? `${s.w} m in ${fmtDur(s.r)}` : bike ? `${s.w} mi in ${fmtDur(s.r)}` : timeOnly ? `${s.r} min` : `${s.r} min @ level ${s.w}`)
     : hold ? `${fmtDur(s.r)} hold${s.w?` · ${s.w} lb`:''}`
     : repsOnly ? `${s.r} reps`
     : `${s.r} reps @ ${s.w}${w.db?'s':' lb'}`;
-  const so = row ? `${fmtPace(pace(s))} km/min` : (hold||repsOnly||timeOnly) ? '' : (s.w*s.r*dbMult(w)).toLocaleString();
+  const so = row ? `${fmtPace(pace(s))} km/min` : bike ? `${fmtMph(mph(s))} mph` : (hold||repsOnly||timeOnly) ? '' : (s.w*s.r*dbMult(w)).toLocaleString();
   return {desc, so};
 }
 // progression highlight for a lift's latest set vs the one before it (same day)
@@ -592,6 +600,7 @@ async function initSync(){
   ensureAbsSeed();
   ensurePlankHold();
   ensureVolleyball();
+  ensureBikeMode();
   renderAll(); stampUpdated();
   setSync('ok','Synced');
 }
@@ -649,6 +658,20 @@ function ensurePlankHold(){
   const p = DATA.workouts['Plank'];
   if(p && !isHold(p)) p.hold = true;
   DATA._plankHold = true;
+  saveLocal();
+}
+// One-time: create cardio "Bike" in bike mode (miles + min, MPH). If an old "Stationary Bike"
+// exists with no logged sessions, drop it; otherwise leave it alone so historical level-based
+// data isn't reinterpreted as miles. Synced flag so it runs once across devices.
+function ensureBikeMode(){
+  if(DATA._bikeMode) return;
+  const old = DATA.workouts['Stationary Bike'];
+  if(old && !Object.keys(old.sessions||{}).length) delete DATA.workouts['Stationary Bike'];
+  if(!DATA.workouts['Bike'])
+    DATA.workouts['Bike'] = { group:'cardio', demo:demoUrl('Bike'), sessions:{}, bike:true, created:Date.now() };
+  else if(!DATA.workouts['Bike'].bike)
+    DATA.workouts['Bike'].bike = true;
+  DATA._bikeMode = true;
   saveLocal();
 }
 // One-time: add Volleyball to cardio in time-only mode for existing installs. Synced flag.
@@ -797,7 +820,7 @@ function renderWorkouts(){
         const dts = sortedDates(w.sessions);
         const last = dts[dts.length-1];
         const sets = last ? w.sessions[last] : [];
-        const row = isRow(w), hold = isHold(w), repsOnly = isRepsOnly(w), timeOnly = isTimeOnly(w);
+        const row = isRow(w), bike = isBike(w), hold = isHold(w), repsOnly = isRepsOnly(w), timeOnly = isTimeOnly(w);
         const hl = last ? setHighlight(w, sets) : '';
         const setsHtml = last
           ? sets.map((s,si)=>`<span class="set${(si===sets.length-1&&hl)?' '+hl:''}">${setText(w,s)}</span>`).join('')
@@ -806,12 +829,13 @@ function renderWorkouts(){
         const burnLine = burnCal>0 ? `<div class="out-sub">🔥 ${burnCal.toLocaleString()} cal</div>` : '';
         const outCell = !last ? '<span class="muted">—</span>'
           : row      ? `<span class="out-val">${fmtPace(sessionPace(sets))}</span> <span class="muted">km/min</span>${burnLine}`
+          : bike     ? `<span class="out-val">${fmtMph(sessionMph(sets))}</span> <span class="muted">mph</span>${burnLine}`
           : hold     ? `<span class="out-val">${fmtDur(sessionBestHold(sets))}</span> <span class="muted">best</span>`
           : repsOnly ? `<span class="out-val">${sessionReps(sets).toLocaleString()}</span> <span class="muted">reps</span>`
           : timeOnly ? `<span class="out-val">${Math.round(sessionReps(sets))}</span> <span class="muted">min</span>${burnLine}`
                      : `<span class="out-val">${workoutOutput(w,sets).toLocaleString()}</span> <span class="muted">${cardio?'work':'lbs'}</span>${burnLine}`;
         const lt = last ? lastSetTime(sets) : null;
-        const outLabel = cardio ? (row?'Pace':timeOnly?'Total Min':'Work') : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
+        const outLabel = cardio ? (row?'Pace':bike?'Pace (mph)':timeOnly?'Total Min':'Work') : hold ? 'Best Hold' : repsOnly ? 'Total Reps' : 'Output (lbs)';
         const tr = el(`<tr>
           <td class="c-name"><span class="w-name" data-open="${encodeURIComponent(name)}">${name}</span>
               <span class="info-ic" data-demo="${encodeURIComponent(name)}" title="How to do it">ℹ</span></td>
@@ -889,10 +913,11 @@ function closeWorkout(){ document.getElementById('w-overlay').classList.remove('
 // Read-only expanded view of one prior session — used to auto-show the last 3 sessions
 // in the workout modal so the user doesn't have to click chips to see them.
 function priorExpandedHtml(w, date){
-  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
+  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), bike=isBike(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
   const sets = w.sessions[date]||[];
   const summary = row
     ? `${sessionDist(sets)} m · ${fmtPace(sessionPace(sets))} km/min`
+    : bike ? `${sessionMiles(sets).toLocaleString(undefined,{maximumFractionDigits:2})} mi · ${fmtMph(sessionMph(sets))} mph`
     : hold ? `best ${fmtDur(sessionBestHold(sets))}`
     : repsOnly ? `${sessionReps(sets)} reps`
     : timeOnly ? `${sessionReps(sets)} min`
@@ -916,18 +941,18 @@ function renderModal(){
   const today = todayStr();
   const todaySets = w.sessions[today] || [];
 
-  const row = isRow(w), hold = isHold(w), repsOnly = isRepsOnly(w), timeOnly = isTimeOnly(w);
+  const row = isRow(w), bike = isBike(w), hold = isHold(w), repsOnly = isRepsOnly(w), timeOnly = isTimeOnly(w);
   // chart points across sessions (filtered by the selected time range)
   const cdts = filterDates(dts);
-  const ptsOut = cdts.map(d=>({label:fmtDate(d), value: row?sessionPace(w.sessions[d]):hold?sessionBestHold(w.sessions[d]):repsOnly?sessionBestReps(w.sessions[d]):timeOnly?sessionReps(w.sessions[d]):workoutOutput(w, w.sessions[d])}));
+  const ptsOut = cdts.map(d=>({label:fmtDate(d), value: row?sessionPace(w.sessions[d]):bike?sessionMph(w.sessions[d]):hold?sessionBestHold(w.sessions[d]):repsOnly?sessionBestReps(w.sessions[d]):timeOnly?sessionReps(w.sessions[d]):workoutOutput(w, w.sessions[d])}));
   const ptsRep = cdts.map(d=>({label:fmtDate(d), value:sessionReps(w.sessions[d])}));
   const ptsSet = cdts.map(d=>({label:fmtDate(d), value:w.sessions[d].length}));
   const lastOut = ptsOut.length?ptsOut[ptsOut.length-1].value:0;
   const lastRep = ptsRep.length?ptsRep[ptsRep.length-1].value:0;
   const lastSet = ptsSet.length?ptsSet[ptsSet.length-1].value:0;
 
-  const wL = row?'Distance (m)':(cardio?'Speed/Level':'Weight');
-  const rL = row?'Time (min)':(cardio?'Minutes':'Reps');
+  const wL = row?'Distance (m)':bike?'Distance (mi)':(cardio?'Speed/Level':'Weight');
+  const rL = (row||bike)?'Time (min)':(cardio?'Minutes':'Reps');
 
   const m = document.getElementById('w-modal');
   m.innerHTML = `
@@ -941,6 +966,7 @@ function renderModal(){
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
     ${cardio
       ? `<label class="opt"><input type="checkbox" id="w-row"${row?' checked':''}> Rowing mode — log distance &amp; time, show km/min</label>
+         <label class="opt"><input type="checkbox" id="w-bike"${bike?' checked':''}> Bike mode — log distance (mi) &amp; time (min), show MPH</label>
          <label class="opt"><input type="checkbox" id="w-timeonly"${timeOnly?' checked':''}> Sport mode — just log minutes (volleyball, basketball, etc.)</label>`
       : `<label class="opt"><input type="checkbox" id="w-hold"${hold?' checked':''}> Timed hold (plank) — log time + optional added weight</label>
          ${(hold||gid==='abs')?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
@@ -956,9 +982,9 @@ function renderModal(){
         ? `<div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="15"></div>`
         : timeOnly
         ? `<div class="field"><label>Minutes</label><input class="num" id="in-r" type="number" inputmode="decimal" step="any" placeholder="60"></div>`
-        : `<div class="field"><label>${wL}</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="${row?'5000':(cardio?'6.0':'135')}"></div>
-           ${row
-             ? `<div class="field"><label>Min</label><input class="num" id="in-min" type="number" inputmode="numeric" step="any" placeholder="20" style="width:70px"></div>
+        : `<div class="field"><label>${wL}</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="${row?'5000':bike?'10':(cardio?'6.0':'135')}"></div>
+           ${(row||bike)
+             ? `<div class="field"><label>Min</label><input class="num" id="in-min" type="number" inputmode="numeric" step="any" placeholder="${bike?'30':'20'}" style="width:70px"></div>
                 <div class="field"><label>Sec</label><input class="num" id="in-sec" type="number" inputmode="numeric" step="any" placeholder="0" style="width:70px"></div>`
              : `<div class="field"><label>${rL}</label><input class="num" id="in-r" type="number" inputmode="${cardio?'decimal':'numeric'}" step="any" placeholder="${cardio?'30':'10'}"></div>`}`}
       <button class="btn" id="add-set">+ Add set</button>
@@ -1003,9 +1029,9 @@ function renderModal(){
     </div>
     ${chartsOpen ? `${rangeToggle()}
     <div class="charts">
-      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':hold?'Longest Hold':repsOnly?'Best Set (reps)':timeOnly?'Total Min':(cardio?'Work':'Total Output')}</div>
-        <div class="cval">${row?fmtPace(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, row?'#22d3ee':'#34d399')}</div>
-      <div class="chart-card"><div class="clab">${hold?'Total Time':repsOnly?'Total Reps':(row||cardio?'Total Min':'Total Reps')}</div>
+      <div class="chart-card"><div class="clab">${row?'Pace (km/min)':bike?'Pace (mph)':hold?'Longest Hold':repsOnly?'Best Set (reps)':timeOnly?'Total Min':(cardio?'Work':'Total Output')}</div>
+        <div class="cval">${row?fmtPace(lastOut):bike?fmtMph(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, (row||bike)?'#22d3ee':'#34d399')}</div>
+      <div class="chart-card"><div class="clab">${hold?'Total Time':repsOnly?'Total Reps':(row||bike||cardio?'Total Min':'Total Reps')}</div>
         <div class="cval">${hold?fmtDur(lastRep):lastRep.toLocaleString()}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
       <div class="chart-card"><div class="clab">Sets</div>
         <div class="cval">${lastSet}<small> last</small></div>${spark(ptsSet,'#f5c542')}</div>
@@ -1015,8 +1041,9 @@ function renderModal(){
   m.querySelector('#w-close').onclick = closeWorkout;
   m.querySelector('#w-rename').onclick = ()=>renameWorkout(name);
   const dbc = m.querySelector('#w-db'); if(dbc) dbc.onchange=()=>{ w.db=dbc.checked; save(); renderModal(); renderWorkouts(); };
-  const rwc = m.querySelector('#w-row'); if(rwc) rwc.onchange=()=>{ w.row=rwc.checked; if(w.row) delete w.timeOnly; save(); renderModal(); renderWorkouts(); };
-  const toc = m.querySelector('#w-timeonly'); if(toc) toc.onchange=()=>{ w.timeOnly=toc.checked; if(w.timeOnly) delete w.row; save(); renderModal(); renderWorkouts(); };
+  const rwc = m.querySelector('#w-row'); if(rwc) rwc.onchange=()=>{ w.row=rwc.checked; if(w.row){ delete w.timeOnly; delete w.bike; } save(); renderModal(); renderWorkouts(); };
+  const bkc = m.querySelector('#w-bike'); if(bkc) bkc.onchange=()=>{ w.bike=bkc.checked; if(w.bike){ delete w.row; delete w.timeOnly; } save(); renderModal(); renderWorkouts(); };
+  const toc = m.querySelector('#w-timeonly'); if(toc) toc.onchange=()=>{ w.timeOnly=toc.checked; if(w.timeOnly){ delete w.row; delete w.bike; } save(); renderModal(); renderWorkouts(); };
   const hdc = m.querySelector('#w-hold'); if(hdc) hdc.onchange=()=>{ w.hold=hdc.checked; if(w.hold) delete w.db; save(); renderModal(); renderWorkouts(); };
   const wtc = m.querySelector('#w-wt'); if(wtc) wtc.onchange=()=>{ w.weighted=wtc.checked; save(); renderModal(); renderWorkouts(); };
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
@@ -1034,7 +1061,7 @@ function renderModal(){
       if(isNaN(rv)||rv<=0){ document.getElementById('in-r').focus(); return; }
     } else {
       wv = parseFloat(document.getElementById('in-w').value);
-      rv = row    ? minSecToMin(document.getElementById('in-min').value, document.getElementById('in-sec').value)
+      rv = (row||bike) ? minSecToMin(document.getElementById('in-min').value, document.getElementById('in-sec').value)
          : cardio ? parseFloat(document.getElementById('in-r').value)
          :          parseInt(document.getElementById('in-r').value,10);
       if(isNaN(wv)||isNaN(rv)||rv<=0){ document.getElementById('in-w').focus(); return; }
@@ -1121,10 +1148,11 @@ function renderMetricModal(){
 }
 // One editable set row (weight/reps, or distance/min/sec, or hold time+weight, or reps-only)
 function setEditRow(w, s, i){
-  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
-  const wL = row?'Dist (m)':(cardio?'Spd/Lvl':'Weight');
+  const gid=w.group, cardio=groupKind(gid)==='cardio', row=isRow(w), bike=isBike(w), hold=isHold(w), repsOnly=isRepsOnly(w), timeOnly=isTimeOnly(w);
+  const wL = row?'Dist (m)':bike?'Dist (mi)':(cardio?'Spd/Lvl':'Weight');
   const rL = cardio?'Minutes':'Reps';
   const so = row ? `${fmtPace(pace(s))} km/min`
+           : bike ? `${fmtMph(mph(s))} mph`
            : (hold||repsOnly) ? ''
            : cardio ? ''
            : (s.w*s.r*dbMult(w)).toLocaleString()+(w.db?' (db)':'');
@@ -1133,12 +1161,12 @@ function setEditRow(w, s, i){
     inputs = `<div class="field"><label>Reps</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${s.r}" style="width:74px"></div>`;
   } else if(timeOnly){
     inputs = `<div class="field"><label>Minutes</label><input class="num pe-in" data-pf="r" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.r}" style="width:84px"></div>`;
-  } else if(row || hold){
+  } else if(row || bike || hold){
     const mn=Math.floor(s.r||0), sc=Math.round(((s.r||0)-mn)*60);
     const timeFields = `<div class="field"><label>Min</label><input class="num pe-in" data-pf="min" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${mn}" style="width:60px"></div>
       <div class="field"><label>Sec</label><input class="num pe-in" data-pf="sec" data-pi="${i}" type="number" step="any" inputmode="numeric" value="${sc}" style="width:60px"></div>`;
-    inputs = row
-      ? `<div class="field"><label>Dist (m)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>${timeFields}`
+    inputs = (row || bike)
+      ? `<div class="field"><label>${row?'Dist (m)':'Dist (mi)'}</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>${timeFields}`
       : `${timeFields}<div class="field"><label>Wt (lb)</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w||''}" placeholder="—" style="width:74px"></div>`;
   } else {
     inputs = `<div class="field"><label>${wL}</label><input class="num pe-in" data-pf="w" data-pi="${i}" type="number" step="any" inputmode="decimal" value="${s.w}" style="width:84px"></div>
