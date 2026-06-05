@@ -2,7 +2,8 @@
 const JSONBIN_BIN_ID = '6a0fbeda6877513b27b14732';
 const JSONBIN_KEY    = '$2a$10$Suhd6ugh.yjzb8tt/KynCuzQNrHQtw0xZSCQRjrpx9893YzyKheoa';
 const JSONBIN_URL    = `https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`;
-const LS_DATA = 'wt_data';
+const LS_DATA_PREFIX = 'wt_data:';   // per-user cache → wt_data:<username>
+const LS_DATA_LEGACY = 'wt_data';    // pre-multiuser cache, migrated on first run
 const LS_USDA = 'wt_usdakey';        // optional per-device USDA key override
 const USDA_DEMO = 'DEMO_KEY';        // last-resort shared demo key (rate-limited)
 // Built-in keys so the app works on EVERY device with zero setup. These are free and
@@ -23,6 +24,44 @@ const aiKey   = () => (localStorage.getItem(LS_AI)||'').trim() || AI_DEFAULT;
 // (https://www.fda.gov/food/nutrition-facts-label). Stored in DATA so they sync across devices.
 const DEFAULT_GOALS = {cal:2000, p:50, c:275, f:78, fib:28, sod:2300};
 const goals = () => ({...DEFAULT_GOALS, ...(DATA.goals||{})});
+
+/* ============================== AUTH ============================== */
+// Hardcoded user map. Repo is public so passwords are weak by design — the gate's job is to
+// scope which profile a session reads/writes, not to defend against attackers. Add new
+// users by appending entries here. type: 'personal' = sees only own data; 'trainer' = can
+// flip between own profile + each linked trainee's profile.
+const USERS = {
+  MPoretz:  { password:'Baloo123', type:'personal', displayName:'Max' },
+  MaxCoach: { password:'Coach123', type:'trainer',  displayName:'Max (Coach)', trainees:['MPoretz'] },
+};
+const LS_USER = 'wt_currentUser';
+const currentUser    = () => localStorage.getItem(LS_USER) || '';
+const currentProfile = () => currentUser();   // step 2 introduces trainer-flip
+const userMeta       = () => USERS[currentUser()] || null;
+const lsDataKey      = () => LS_DATA_PREFIX + currentProfile();
+
+function attemptLogin(u, p){
+  const meta = USERS[u];
+  if(!meta || meta.password !== p) return false;
+  localStorage.setItem(LS_USER, u);
+  return true;
+}
+function doLogout(){
+  localStorage.removeItem(LS_USER);
+  location.reload();
+}
+function showLoginGate(){
+  document.body.classList.add('locked');
+  const form = document.getElementById('login-form');
+  const err  = document.getElementById('login-err');
+  form.onsubmit = (e)=>{
+    e.preventDefault();
+    const u = document.getElementById('login-user').value.trim();
+    const p = document.getElementById('login-pass').value;
+    if(attemptLogin(u, p)){ location.reload(); }
+    else { err.textContent = 'Invalid username or password.'; err.style.display='block'; }
+  };
+}
 
 const GROUPS = [
   {id:'back-bicep',   name:'Back & Bicep',  kind:'lift'},
@@ -368,12 +407,42 @@ function stampUpdated(){
     'Updated ' + new Date(DATA._updated||Date.now()).toLocaleString('en-US',
       {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 }
-function loadLocal(){
-  try{ const j = JSON.parse(localStorage.getItem(LS_DATA)); if(j) DATA = j; }catch(e){}
-}
-function saveLocal(){ localStorage.setItem(LS_DATA, JSON.stringify(DATA)); }
+// Bin schema v2: { _schema:2, <username>: <profile>, ... }. Pre-v2 was a single flat profile
+// at the top level. binCache holds the last-known full bin so push can update OUR slice
+// without clobbering others. Always refetched immediately before a PUT for safety.
+let binCache = null;
 
-async function fetchRemote(){
+function emptyProfile(){ return { workouts:{}, food:{}, body:{}, comp:{}, _updated:0 }; }
+
+// Migrate a pre-v2 flat bin into the namespaced v2 layout. Idempotent.
+function migrateBin(bin){
+  if(!bin) return { _schema:2 };
+  if(bin._schema === 2) return bin;
+  const profile = {};
+  for(const k of Object.keys(bin)){
+    if(k === '_schema') continue;
+    profile[k] = bin[k];
+  }
+  // Pre-v2 data was Max's. Park it under MPoretz so step 1 is transparent for him.
+  return { _schema:2, MPoretz: profile };
+}
+
+function loadLocal(){
+  // Try per-user cache first; fall back to legacy flat cache once for MPoretz (one-shot migration).
+  try{
+    const j = JSON.parse(localStorage.getItem(lsDataKey()));
+    if(j){ DATA = j; return; }
+  }catch(e){}
+  if(currentUser() === 'MPoretz'){
+    try{
+      const j = JSON.parse(localStorage.getItem(LS_DATA_LEGACY));
+      if(j){ DATA = j; localStorage.setItem(lsDataKey(), JSON.stringify(DATA)); }
+    }catch(e){}
+  }
+}
+function saveLocal(){ localStorage.setItem(lsDataKey(), JSON.stringify(DATA)); }
+
+async function fetchBin(){
   try{
     const r = await fetch(`${JSONBIN_URL}/latest`, {headers:{'X-Master-Key':JSONBIN_KEY}});
     if(!r.ok) return null;
@@ -381,14 +450,25 @@ async function fetchRemote(){
     return (j && j.record) || null;
   }catch(e){ return null; }
 }
+// Returns {bin, profile, migrated}. profile = bin[currentProfile()] (may be null on first login).
+async function fetchRemote(){
+  const raw = await fetchBin();
+  if(!raw) return { bin:null, profile:null, migrated:false };
+  const migrated = raw._schema !== 2;
+  const bin = migrateBin(raw);
+  binCache = bin;
+  return { bin, profile: bin[currentProfile()] || null, migrated };
+}
 async function initSync(){
   loadLocal();
   setSync('saving','Syncing…');
-  const remote = await fetchRemote();
-  if(remote && (remote._updated||0) >= (DATA._updated||0)){
-    DATA = remote; saveLocal();
-  } else if(DATA._updated && (!remote || DATA._updated > (remote._updated||0))){
-    pushRemote();   // local is newer — push it up
+  const {profile, migrated} = await fetchRemote();
+  if(profile && (profile._updated||0) >= (DATA._updated||0)){
+    DATA = profile; saveLocal();
+  } else if(DATA._updated && (!profile || DATA._updated > (profile._updated||0))){
+    await pushRemote();   // local is newer — push it up (also persists migration)
+  } else if(migrated){
+    await pushRemote();   // persist the schema migration even if no profile changes
   }
   ensureSeed();
   ensureMetrics();
@@ -408,10 +488,15 @@ function save(){            // call after any mutation
 }
 async function pushRemote(){
   try{
+    // Always refetch immediately before PUT so we don't clobber concurrent edits to other profiles.
+    const fresh = migrateBin(await fetchBin());
+    binCache = fresh;
+    binCache._schema = 2;
+    binCache[currentProfile()] = DATA;
     const r = await fetch(JSONBIN_URL, {
       method:'PUT',
       headers:{'Content-Type':'application/json','X-Master-Key':JSONBIN_KEY},
-      body: JSON.stringify(DATA)
+      body: JSON.stringify(binCache)
     });
     setSync(r.ok?'ok':'off', r.ok?'Synced':'Offline (saved locally)');
   }catch(e){ setSync('off','Offline (saved locally)'); }
@@ -1657,6 +1742,10 @@ function openSettings(){
     <div class="block-title" style="margin-top:22px">Data</div>
     <div class="modal-sub">Synced to your private cloud bin and cached on this device. Same data on phone &amp; computer.</div>
     <button class="btn ghost sm" id="export-json">Download backup (.json)</button>
+    <div class="user-chip">
+      <span>Signed in as <b>${(userMeta()&&userMeta().displayName)||currentUser()}</b></span>
+      <button class="logout" id="logout-btn">Log out</button>
+    </div>
   `;
   m.querySelector('#s-close').onclick = ()=>document.getElementById('s-overlay').classList.remove('show');
   m.querySelector('#usda-save').onclick = ()=>{
@@ -1669,6 +1758,7 @@ function openSettings(){
     document.getElementById('s-overlay').classList.remove('show');
     renderNutrition(); renderBody();
   };
+  m.querySelector('#logout-btn').onclick = doLogout;
   m.querySelector('#export-json').onclick = ()=>{
     const blob = new Blob([JSON.stringify(DATA,null,2)],{type:'application/json'});
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
@@ -1750,13 +1840,18 @@ document.getElementById('gear').onclick = openSettings;
 
 // refresh from cloud when returning to the page (e.g. computer after gym)
 document.addEventListener('visibilitychange', async ()=>{
-  if(document.visibilityState==='visible'){
-    const remote = await fetchRemote();
-    if(remote && (remote._updated||0) > (DATA._updated||0)){
-      DATA = remote; saveLocal(); renderAll(); stampUpdated(); setSync('ok','Synced');
+  if(document.visibilityState==='visible' && userMeta()){
+    const {profile} = await fetchRemote();
+    if(profile && (profile._updated||0) > (DATA._updated||0)){
+      DATA = profile; saveLocal(); renderAll(); stampUpdated(); setSync('ok','Synced');
     }
   }
 });
 
-setupNureli();
-initSync();
+if(!userMeta()){
+  showLoginGate();
+} else {
+  document.body.classList.remove('locked');
+  setupNureli();
+  initSync();
+}

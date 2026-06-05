@@ -12,7 +12,19 @@
 <meta name="theme-color" content="#0f1115">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="locked">
+<div class="login-overlay" id="login-overlay">
+  <div class="login-card">
+    <h2>Workout Tracker</h2>
+    <div class="login-sub">Sign in to continue.</div>
+    <form id="login-form">
+      <div class="field"><label>Username</label><input id="login-user" autocomplete="username" autocapitalize="none" autocorrect="off" required></div>
+      <div class="field"><label>Password</label><input id="login-pass" type="password" autocomplete="current-password" required></div>
+      <div class="login-err" id="login-err"></div>
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</div>
 <header>
   <div class="title"><span class="dot"></span> Workout Tracker</div>
   <div class="sub">
