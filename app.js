@@ -723,6 +723,113 @@ function priorExpandedHtml(w, date){
     <div class="today-sets">${list}</div>
   </div>`;
 }
+// ============================ WORKOUT MODAL ============================
+// renderModal orchestrates; each section's HTML lives in its own helper below.
+
+// Mode-toggle checkboxes at the top of the modal (cardio mode mutex, or lift flags).
+function modalModeTogglesHtml(w, cm, hold, repsOnly){
+  if(cm) return CARDIO_MODE_KEYS.map(k=>{ const cmk = CARDIO_MODES[k];
+    return `<label class="opt"><input type="checkbox" data-cmode="${k}"${w[cmk.flag]?' checked':''}> ${cmk.toggleLabel}</label>`;
+  }).join('');
+  const isAbs = w.group==='abs';
+  return `<label class="opt"><input type="checkbox" id="w-hold"${hold?' checked':''}> Timed hold (plank) — log time + optional added weight</label>
+    ${(hold||isAbs)?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
+    ${(isAbs&&!hold)?`<label class="opt"><input type="checkbox" id="w-wt"${w.weighted?' checked':''}> Track weight (weight × reps) — for machines/weighted ab work</label>`:''}`;
+}
+// Log-a-set field row. Lifts use Weight + Reps; cardio defers to its mode's layout.
+function modalLogInputsHtml(cm, hold, repsOnly, cardio){
+  if(hold) return `<div class="field"><label>Min</label><input class="num" id="in-min" type="number" inputmode="numeric" step="any" placeholder="1" style="width:70px"></div>
+    <div class="field"><label>Sec</label><input class="num" id="in-sec" type="number" inputmode="numeric" step="any" placeholder="30" style="width:70px"></div>
+    <div class="field"><label>Weight (lb) — optional</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="bodyweight"></div>`;
+  if(repsOnly) return `<div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="15"></div>`;
+  if(cardio) return cardioLogInputsHtml(cm);
+  return `<div class="field"><label>Weight</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="135"></div>
+    <div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="10"></div>`;
+}
+// "Today's sets" block: empty state, edit-mode editor, or read-only list with per-set delete.
+function modalTodaySetsHtml(w, todaySets){
+  const header = todaySets.length ? `<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
+    <span>Today's sets</span>
+    <button class="btn ghost mini" id="edit-today" style="margin-left:auto">${editToday?'✓ Done':'✎ Edit'}</button>
+  </div>` : '';
+  let body;
+  if(!todaySets.length) body = `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`;
+  else if(editToday)    body = editableSets(w, todayStr());
+  else body = todaySets.map((s,i)=>{
+    const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
+    const {desc,so} = setDescSo(w, s);
+    return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span><button class="del" data-rm="${i}">×</button></div>`;
+  }).join('');
+  return `${header}<div class="today-sets" id="today-sets">${body}</div>`;
+}
+// Recent (top-3 expanded) + older (chip list + click-to-show detail) sessions.
+function modalPriorSessionsHtml(w, dts, today, name){
+  const priorAll = dts.filter(d=>d!==today).slice().reverse();   // newest first
+  const top3 = priorAll.slice(0,3);
+  const older = priorAll.slice(3);
+  const expanded = top3.length
+    ? `<div class="prior-expanded-list">${top3.map(d=>priorExpandedHtml(w,d)).join('')}</div>`
+    : '<div class="muted" style="font-size:13px;margin-top:6px">No prior sessions.</div>';
+  const chips = older.length
+    ? `<div class="prior-list" id="prior-list">${older.map(d=>
+        `<span class="prior-chip${modalPriorDate===d?' active':''}" data-prior="${d}">${fmtDate(d)}</span>`).join('')}</div>`
+    : '';
+  return `<div class="block-title">Recent sessions</div>${expanded}${
+    older.length?`<div class="block-title" style="font-size:13px;margin-top:14px">Older sessions</div>${chips}
+    <div class="prior-detail" id="prior-detail">${priorDetailHtml(name)}</div>`:''}`;
+}
+// Trends section (collapsible) — 3 chart cards: headline, reps/min total, sets count.
+function modalChartsHtml(cardio, cm, hold, repsOnly, ptsOut, ptsRep, ptsSet, lastOut, lastRep, lastSet){
+  const header = `<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:18px">
+    <span>📈 Trends</span>
+    <button class="btn ghost mini" id="charts-toggle" style="margin-left:auto">${chartsOpen?'▾ Hide':'▸ Show'}</button>
+  </div>`;
+  if(!chartsOpen) return header;
+  const card1Label = cm?cm.chartLabel:hold?'Longest Hold':repsOnly?'Best Set (reps)':'Total Output';
+  const card1Val   = cm?cm.chartFmt(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString();
+  const card2Label = hold?'Total Time':repsOnly?'Total Reps':(cardio?'Total Min':'Total Reps');
+  const card2Val   = hold?fmtDur(lastRep):lastRep.toLocaleString();
+  return `${header}${rangeToggle()}
+    <div class="charts">
+      <div class="chart-card"><div class="clab">${card1Label}</div>
+        <div class="cval">${card1Val}<small> last</small></div>${spark(ptsOut, cm?cm.chartColor:'#34d399')}</div>
+      <div class="chart-card"><div class="clab">${card2Label}</div>
+        <div class="cval">${card2Val}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
+      <div class="chart-card"><div class="clab">Sets</div>
+        <div class="cval">${lastSet}<small> last</small></div>${spark(ptsSet,'#f5c542')}</div>
+    </div>`;
+}
+// Read + validate the Log-a-set inputs. Returns {wv, rv} or null when invalid (and focuses the bad field).
+function parseLoggedSet(cm, hold, repsOnly, cardio){
+  const num = id => document.getElementById(id);
+  const bad = (id) => { num(id).focus(); return null; };
+  if(hold){                                   // time required, weight optional (blank = bodyweight = 0)
+    const rv = minSecToMin(num('in-min').value, num('in-sec').value);
+    let wv = parseFloat(num('in-w').value); if(isNaN(wv)) wv = 0;
+    return rv>0 ? {wv, rv} : bad('in-min');
+  }
+  if(repsOnly){                               // abs: reps only, no weight
+    const rv = parseInt(num('in-r').value,10);
+    return (!isNaN(rv) && rv>0) ? {wv:0, rv} : bad('in-r');
+  }
+  if(cardio){                                 // dispatch on the active cardio mode's layout
+    if(cm.layout === 'r-only'){
+      const rv = parseFloat(num('in-r').value);
+      return (!isNaN(rv) && rv>0) ? {wv:0, rv} : bad('in-r');
+    }
+    if(cm.layout === 'w-time'){
+      const wv = parseFloat(num('in-w').value);
+      const rv = minSecToMin(num('in-min').value, num('in-sec').value);
+      return (!isNaN(wv) && rv>0) ? {wv, rv} : bad('in-w');
+    }
+    // 'w-r' — default cardio (speed/level + minutes)
+    const wv = parseFloat(num('in-w').value), rv = parseFloat(num('in-r').value);
+    return (!isNaN(wv) && !isNaN(rv) && rv>0) ? {wv, rv} : bad('in-w');
+  }
+  // lift: weight × reps
+  const wv = parseFloat(num('in-w').value), rv = parseInt(num('in-r').value,10);
+  return (!isNaN(wv) && !isNaN(rv) && rv>0) ? {wv, rv} : bad('in-w');
+}
 function renderModal(){
   if(isMetric(DATA.workouts[modalName])) return renderMetricModal();
   const name = modalName, w = DATA.workouts[name];
@@ -758,127 +865,42 @@ function renderModal(){
     <div class="modal-sub">${(GROUPS.find(g=>g.id===gid)||{}).name} ·
       <a href="${w.demo}" target="_blank" rel="noopener">▶ form demo</a> ·
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
-    ${cardio
-      ? CARDIO_MODE_KEYS.map(k=>{ const cmk = CARDIO_MODES[k];
-          return `<label class="opt"><input type="checkbox" data-cmode="${k}"${w[cmk.flag]?' checked':''}> ${cmk.toggleLabel}</label>`;
-        }).join('')
-      : `<label class="opt"><input type="checkbox" id="w-hold"${hold?' checked':''}> Timed hold (plank) — log time + optional added weight</label>
-         ${(hold||gid==='abs')?'':`<label class="opt"><input type="checkbox" id="w-db"${w.db?' checked':''}> Dumbbell — two weights (shows &ldquo;35s&rdquo;, doubles output)</label>`}
-         ${(gid==='abs'&&!hold)?`<label class="opt"><input type="checkbox" id="w-wt"${w.weighted?' checked':''}> Track weight (weight × reps) — for machines/weighted ab work</label>`:''}`}
-
+    ${modalModeTogglesHtml(w, cm, hold, repsOnly)}
     <div class="block-title">Log a set you just did (${fmtDateLong(today)})</div>
     <div class="field-row">
-      ${hold
-        ? `<div class="field"><label>Min</label><input class="num" id="in-min" type="number" inputmode="numeric" step="any" placeholder="1" style="width:70px"></div>
-           <div class="field"><label>Sec</label><input class="num" id="in-sec" type="number" inputmode="numeric" step="any" placeholder="30" style="width:70px"></div>
-           <div class="field"><label>Weight (lb) — optional</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="bodyweight"></div>`
-        : repsOnly
-        ? `<div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="15"></div>`
-        : cardio
-        ? cardioLogInputsHtml(cm)
-        : `<div class="field"><label>Weight</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="135"></div>
-           <div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="10"></div>`}
+      ${modalLogInputsHtml(cm, hold, repsOnly, cardio)}
       <button class="btn" id="add-set">+ Add set</button>
     </div>
-    ${todaySets.length?`<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
-      <span>Today's sets</span>
-      <button class="btn ghost mini" id="edit-today" style="margin-left:auto">${editToday?'✓ Done':'✎ Edit'}</button>
-    </div>`:''}
-    <div class="today-sets" id="today-sets">${
-      !todaySets.length
-        ? `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`
-        : editToday
-        ? editableSets(w, today)
-        : todaySets.map((s,i)=>{
-            const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
-            const {desc,so} = setDescSo(w, s);
-            return `<div class="set-line${hl?' '+hl:''}">
-            <span>${desc}</span>
-            <span class="so">${so}</span>
-            <button class="del" data-rm="${i}">×</button></div>`;}).join('')
-    }</div>
-
-    ${(()=>{
-      const priorAll = dts.filter(d=>d!==today).slice().reverse();   // newest first
-      const top3 = priorAll.slice(0,3);
-      const older = priorAll.slice(3);
-      const expanded = top3.length
-        ? `<div class="prior-expanded-list">${top3.map(d=>priorExpandedHtml(w,d)).join('')}</div>`
-        : '<div class="muted" style="font-size:13px;margin-top:6px">No prior sessions.</div>';
-      const chips = older.length
-        ? `<div class="prior-list" id="prior-list">${older.map(d=>
-            `<span class="prior-chip${modalPriorDate===d?' active':''}" data-prior="${d}">${fmtDate(d)}</span>`).join('')}</div>`
-        : '';
-      return `<div class="block-title">Recent sessions</div>${expanded}${
-        older.length?`<div class="block-title" style="font-size:13px;margin-top:14px">Older sessions</div>${chips}
-        <div class="prior-detail" id="prior-detail">${priorDetailHtml(name)}</div>`:''}`;
-    })()}
-
-    <div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:18px">
-      <span>📈 Trends</span>
-      <button class="btn ghost mini" id="charts-toggle" style="margin-left:auto">${chartsOpen?'▾ Hide':'▸ Show'}</button>
-    </div>
-    ${chartsOpen ? `${rangeToggle()}
-    <div class="charts">
-      <div class="chart-card"><div class="clab">${cm?cm.chartLabel:hold?'Longest Hold':repsOnly?'Best Set (reps)':'Total Output'}</div>
-        <div class="cval">${cm?cm.chartFmt(lastOut):hold?fmtDur(lastOut):lastOut.toLocaleString()}<small> last</small></div>${spark(ptsOut, cm?cm.chartColor:'#34d399')}</div>
-      <div class="chart-card"><div class="clab">${hold?'Total Time':repsOnly?'Total Reps':(cardio?'Total Min':'Total Reps')}</div>
-        <div class="cval">${hold?fmtDur(lastRep):lastRep.toLocaleString()}<small> last</small></div>${spark(ptsRep,'#22d3ee')}</div>
-      <div class="chart-card"><div class="clab">Sets</div>
-        <div class="cval">${lastSet}<small> last</small></div>${spark(ptsSet,'#f5c542')}</div>
-    </div>` : ''}
+    ${modalTodaySetsHtml(w, todaySets)}
+    ${modalPriorSessionsHtml(w, dts, today, name)}
+    ${modalChartsHtml(cardio, cm, hold, repsOnly, ptsOut, ptsRep, ptsSet, lastOut, lastRep, lastSet)}
   `;
-  // wire
+  // ----- wire handlers -----
   m.querySelector('#w-close').onclick = closeWorkout;
   m.querySelector('#w-rename').onclick = ()=>renameWorkout(name);
-  const dbc = m.querySelector('#w-db'); if(dbc) dbc.onchange=()=>{ w.db=dbc.checked; save(); renderModal(); renderWorkouts(); };
-  const hdc = m.querySelector('#w-hold'); if(hdc) hdc.onchange=()=>{ w.hold=hdc.checked; if(w.hold) delete w.db; save(); renderModal(); renderWorkouts(); };
-  const wtc = m.querySelector('#w-wt'); if(wtc) wtc.onchange=()=>{ w.weighted=wtc.checked; save(); renderModal(); renderWorkouts(); };
+  const rerender = ()=>{ save(); renderModal(); renderWorkouts(); };
+  const dbc = m.querySelector('#w-db'); if(dbc) dbc.onchange=()=>{ w.db=dbc.checked; rerender(); };
+  const hdc = m.querySelector('#w-hold'); if(hdc) hdc.onchange=()=>{ w.hold=hdc.checked; if(w.hold) delete w.db; rerender(); };
+  const wtc = m.querySelector('#w-wt'); if(wtc) wtc.onchange=()=>{ w.weighted=wtc.checked; rerender(); };
   // Cardio mode toggles: mutex — checking one clears the others.
   m.querySelectorAll('[data-cmode]').forEach(cb => cb.onchange = ()=>{
     CARDIO_MODE_KEYS.forEach(k => delete w[CARDIO_MODES[k].flag]);
     if(cb.checked) w[CARDIO_MODES[cb.dataset.cmode].flag] = true;
-    save(); renderModal(); renderWorkouts();
+    rerender();
   });
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
   m.querySelector('#add-set').onclick = ()=>{
-    let wv, rv;
-    const num = id => document.getElementById(id);
-    if(hold){                                   // time required, weight optional (blank = bodyweight = 0)
-      rv = minSecToMin(num('in-min').value, num('in-sec').value);
-      wv = parseFloat(num('in-w').value); if(isNaN(wv)) wv = 0;
-      if(rv<=0){ num('in-min').focus(); return; }
-    } else if(repsOnly){                        // abs: reps only, no weight
-      rv = parseInt(num('in-r').value,10); wv = 0;
-      if(isNaN(rv)||rv<=0){ num('in-r').focus(); return; }
-    } else if(cardio){                          // dispatch on the active cardio mode's layout
-      if(cm.layout === 'r-only'){
-        rv = parseFloat(num('in-r').value); wv = 0;
-        if(isNaN(rv)||rv<=0){ num('in-r').focus(); return; }
-      } else if(cm.layout === 'w-time'){
-        wv = parseFloat(num('in-w').value);
-        rv = minSecToMin(num('in-min').value, num('in-sec').value);
-        if(isNaN(wv)||rv<=0){ num('in-w').focus(); return; }
-      } else {                                  // 'w-r' — default cardio (speed/level + minutes)
-        wv = parseFloat(num('in-w').value);
-        rv = parseFloat(num('in-r').value);
-        if(isNaN(wv)||isNaN(rv)||rv<=0){ num('in-w').focus(); return; }
-      }
-    } else {                                    // lift: weight × reps
-      wv = parseFloat(num('in-w').value);
-      rv = parseInt(num('in-r').value,10);
-      if(isNaN(wv)||isNaN(rv)||rv<=0){ num('in-w').focus(); return; }
-    }
+    const r = parseLoggedSet(cm, hold, repsOnly, cardio); if(!r) return;
     if(!w.sessions[today]) w.sessions[today]=[];
-    w.sessions[today].push({w:wv, r:rv, t:Date.now()});
-    save(); renderModal(); renderWorkouts();
+    w.sessions[today].push({w:r.wv, r:r.rv, t:Date.now()});
+    rerender();
   };
   const et = m.querySelector('#edit-today'); if(et) et.onclick=()=>{ editToday=!editToday; renderModal(); };
   m.querySelectorAll('[data-rm]').forEach(b=> b.onclick=()=>{
     const i = +b.dataset.rm;
     w.sessions[today].splice(i,1);
     if(!w.sessions[today].length) delete w.sessions[today];
-    save(); renderModal(); renderWorkouts();
+    rerender();
   });
   m.querySelectorAll('[data-prior]').forEach(c=> c.onclick=()=>{
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
