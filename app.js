@@ -534,7 +534,7 @@ async function fetchRemote(){
 async function initSync(){
   loadLocal();
   setSync('saving','Syncing…');
-  const {profile, migrated} = await fetchRemote();
+  const {bin, profile, migrated} = await fetchRemote();
   if(profile && (profile._updated||0) >= (DATA._updated||0)){
     DATA = profile; saveLocal();
   } else if(DATA._updated && (!profile || DATA._updated > (profile._updated||0))){
@@ -550,7 +550,7 @@ async function initSync(){
   ensureBikeMode();
   renderAll(); stampUpdated();
   renderProfileBar();   // dyn users may have changed elsewhere — refresh the dropdown
-  setSync('ok','Synced');
+  if(bin) setSync('ok','Synced'); else setSync('off','Offline (using local)');
 }
 function save(){            // call after any mutation
   DATA._updated = Date.now();
@@ -2117,16 +2117,28 @@ document.getElementById('w-overlay').addEventListener('click', e=>{ if(e.target.
 document.getElementById('s-overlay').addEventListener('click', e=>{ if(e.target.id==='s-overlay') document.getElementById('s-overlay').classList.remove('show'); });
 document.getElementById('gear').onclick = openSettings;
 
-// refresh from cloud when returning to the page (e.g. computer after gym)
+// refresh from cloud when returning to the page (e.g. computer after gym).
+// Also pushes if local is newer — covers "made edits offline, then re-focused the tab".
 document.addEventListener('visibilitychange', async ()=>{
   if(document.visibilityState==='visible' && userMeta()){
-    const {profile} = await fetchRemote();
+    const {bin, profile} = await fetchRemote();
     if(profile && (profile._updated||0) > (DATA._updated||0)){
       DATA = profile; saveLocal(); renderAll(); stampUpdated(); setSync('ok','Synced');
+    } else if(bin && DATA._updated && DATA._updated > (profile && profile._updated || 0)){
+      pushRemote();
     }
     renderProfileBar();
   }
 });
+
+// Push any queued local edits as soon as the network returns (gym Wi-Fi drops, etc).
+window.addEventListener('online', ()=>{
+  if(userMeta() && DATA && DATA._updated) pushRemote();
+});
+
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
+}
 
 loadCachedUsers();
 if(!userMeta()){
