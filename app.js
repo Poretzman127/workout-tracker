@@ -351,8 +351,9 @@ function setHighlight(w, sets){
   const a=sets[sets.length-2], b=sets[sets.length-1];
   // every lift set gets a color vs the prior set: matched/beat = green, pushed heavier but fewer reps = red, otherwise = yellow (still grinding)
   if(b.w===a.w && b.r===a.r) return 'hl-green';
-  if(b.w> a.w && b.r< a.r) return 'hl-red';
-  return 'hl-yellow';
+  if(b.w===a.w && b.r< a.r)  return 'hl-yellow';
+  if(b.w>  a.w)              return 'hl-red';
+  return '';
 }
 function sortedDates(obj){ return Object.keys(obj||{}).sort(); }      // asc
 function groupKind(gid){ return (GROUPS.find(g=>g.id===gid)||{}).kind; }
