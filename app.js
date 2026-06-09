@@ -1135,9 +1135,11 @@ function renderModal(){
     ${modalModeTogglesHtml(w, cm, hold, repsOnly)}
     <div class="block-title">Log a set ${logDate===today?'you just did':'for a past day'}</div>
     <div class="field-row">
-      <div class="field"><label>Date</label><input id="log-date" type="date" value="${logDate}" max="${today}"></div>
       ${modalLogInputsHtml(cm, hold, repsOnly, cardio)}
       <div class="field"><label>Rest (s)</label><input class="num" id="rest-sec" type="number" inputmode="numeric" step="any" value="${w.rest==null?90:w.rest}" placeholder="90" style="width:70px" title="0 = no auto-start"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Date</label><input id="log-date" type="date" value="${logDate}" max="${today}"></div>
       <button class="btn" id="add-set">+ Add set</button>
     </div>
     ${modalTodaySetsHtml(w, daySets, logDate)}
