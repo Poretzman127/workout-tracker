@@ -856,7 +856,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null;
+let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null, modalLogged = false;
 let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
@@ -873,15 +873,16 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null;   // default each open to 7 days, view mode
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null; modalLogged = false;   // default each open to 7 days, view mode
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
 function closeWorkout(){
   const w = modalName && DATA.workouts[modalName];
+  const shouldScroll = modalLogged;
   document.getElementById('w-overlay').classList.remove('show');
-  modalName=null;
-  if(w){
+  modalName=null; modalLogged=false;
+  if(w && shouldScroll){
     requestAnimationFrame(()=>{
       const head = document.querySelector(`.section-head[data-toggle="${w.group}"]`);
       if(head) head.scrollIntoView({behavior:'smooth', block:'start'});
@@ -1083,6 +1084,7 @@ function renderModal(){
     const r = parseLoggedSet(cm, hold, repsOnly, cardio); if(!r) return;
     if(!w.sessions[today]) w.sessions[today]=[];
     w.sessions[today].push({w:r.wv, r:r.rv, t:Date.now()});
+    modalLogged = true;
     rerender();
   };
   const et = m.querySelector('#edit-mode'); if(et) et.onclick=()=>{ editMode=!editMode; editingDate=null; renderModal(); };
