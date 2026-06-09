@@ -857,7 +857,55 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null, modalLogged = false, logDate = null;
+let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null, modalLogged = false, logDate = null, editingNote = false;
+// Rest timer — page-global so it survives modal close (user often closes the lift modal between sets)
+let restEndTs = 0, restExName = '', restTickIv = null;
+const REST_QUICK = [30, 60, 90, 120, 180];
+function fmtSec(s){ s = Math.max(0, s|0); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
+function escHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function ensureRestEl(){
+  let el = document.getElementById('rest-chip');
+  if(!el){ el = document.createElement('div'); el.id = 'rest-chip'; el.className = 'rest-chip'; document.body.appendChild(el); }
+  return el;
+}
+function wireRestChip(el){
+  const stop = el.querySelector('[data-rt-stop]'); if(stop) stop.onclick = stopRest;
+  el.querySelectorAll('[data-rt]').forEach(b=> b.onclick = ()=> startRest(restExName, +b.dataset.rt));
+}
+function tickRest(){
+  const el = ensureRestEl();
+  if(!restEndTs){ el.classList.remove('show','done'); return; }
+  const now = Date.now(), remain = Math.ceil((restEndTs - now)/1000);
+  if(remain > 0){
+    el.classList.remove('done'); el.classList.add('show');
+    el.innerHTML = `<span class="rt-time">${fmtSec(remain)}</span>
+      <span class="rt-name">${escHtml(restExName)}</span>
+      <div class="rt-quick">${REST_QUICK.map(s=>`<button data-rt="${s}">${s}s</button>`).join('')}</div>
+      <button class="rt-x" data-rt-stop title="Stop timer">✕</button>`;
+    wireRestChip(el);
+  } else {
+    if(!el.classList.contains('done')){
+      el.classList.add('done');
+      el.innerHTML = `<span class="rt-time">✅ Rest done</span>
+        <span class="rt-name">${escHtml(restExName)}</span>
+        <button class="rt-x" data-rt-stop title="Dismiss">✕</button>`;
+      wireRestChip(el);
+      try{ if(navigator.vibrate) navigator.vibrate([220,90,220,90,440]); }catch(e){}
+    }
+    if(now - restEndTs > 10000) stopRest();   // auto-dismiss 10s after end
+  }
+}
+function startRest(name, sec){
+  if(!(sec>0)) return;   // 0 / negative means timer disabled for this exercise
+  restExName = name; restEndTs = Date.now() + sec*1000;
+  if(!restTickIv) restTickIv = setInterval(tickRest, 500);   // 500ms so the visible second flips snappily
+  tickRest();
+}
+function stopRest(){
+  restEndTs = 0; restExName = '';
+  if(restTickIv){ clearInterval(restTickIv); restTickIv = null; }
+  const el = document.getElementById('rest-chip'); if(el){ el.classList.remove('show','done'); el.innerHTML = ''; }
+}
 let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
@@ -874,7 +922,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null; modalLogged = false; logDate = todayStr();   // default each open to 7 days, view mode, today's date for logging
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null; modalLogged = false; logDate = todayStr(); editingNote = false;   // default each open to 7 days, view mode, today's date for logging, note collapsed
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -915,6 +963,26 @@ function priorExpandedHtml(w, date){
 // ============================ WORKOUT MODAL ============================
 // renderModal orchestrates; each section's HTML lives in its own helper below.
 
+// Coach/self note shown near the top of the modal. Persists per exercise (w.note).
+// Visible on EVERY view of this exercise — trainer leaves a cue once, trainee sees it always.
+function noteBlockHtml(w){
+  if(editingNote){
+    return `<div class="ex-note edit">
+      <textarea id="ex-note-ta" rows="3" placeholder="Form cue, coach note, weight progression target…">${escHtml(w.note||'')}</textarea>
+      <div class="ex-note-btns">
+        <button class="btn sm" id="ex-note-save">Save</button>
+        <button class="btn ghost sm" id="ex-note-cancel">Cancel</button>
+        ${w.note?`<button class="btn ghost sm" id="ex-note-del" style="margin-left:auto;color:#f87171">Delete</button>`:''}
+      </div></div>`;
+  }
+  if(w.note){
+    return `<div class="ex-note view" id="ex-note-edit" title="Tap to edit">
+      <span class="ex-note-ic">📝</span>
+      <span class="ex-note-text">${escHtml(w.note)}</span>
+      <span class="ex-note-pencil">✏️</span></div>`;
+  }
+  return `<div class="ex-note empty"><button class="btn ghost mini" id="ex-note-edit">📝 + Add note</button></div>`;
+}
 // Mode-toggle checkboxes at the top of the modal (cardio mode mutex, or lift flags).
 function modalModeTogglesHtml(w, cm, hold, repsOnly){
   if(cm) return CARDIO_MODE_KEYS.map(k=>{ const cmk = CARDIO_MODES[k];
@@ -1063,11 +1131,13 @@ function renderModal(){
     <div class="modal-sub">${(GROUPS.find(g=>g.id===gid)||{}).name} ·
       <a href="${w.demo}" target="_blank" rel="noopener">▶ form demo</a> ·
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
+    ${noteBlockHtml(w)}
     ${modalModeTogglesHtml(w, cm, hold, repsOnly)}
     <div class="block-title">Log a set ${logDate===today?'you just did':'for a past day'}</div>
     <div class="field-row">
       <div class="field"><label>Date</label><input id="log-date" type="date" value="${logDate}" max="${today}"></div>
       ${modalLogInputsHtml(cm, hold, repsOnly, cardio)}
+      <div class="field"><label>Rest (s)</label><input class="num" id="rest-sec" type="number" inputmode="numeric" step="any" value="${w.rest==null?90:w.rest}" placeholder="90" style="width:70px" title="0 = no auto-start"></div>
       <button class="btn" id="add-set">+ Add set</button>
     </div>
     ${modalTodaySetsHtml(w, daySets, logDate)}
@@ -1093,6 +1163,26 @@ function renderModal(){
     editingDate = null;   // a date switch shouldn't keep a stale edit-target highlighted
     renderModal();
   };
+  // Note block: view→edit→save/cancel/delete. Persists w.note across sessions for everyone viewing this exercise.
+  const noteEd = m.querySelector('#ex-note-edit'); if(noteEd) noteEd.onclick = ()=>{ editingNote = true; renderModal();
+    setTimeout(()=>{ const ta=document.getElementById('ex-note-ta'); if(ta){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }, 0);
+  };
+  const noteSave = m.querySelector('#ex-note-save'); if(noteSave) noteSave.onclick = ()=>{
+    const v = (document.getElementById('ex-note-ta').value||'').trim();
+    if(v) w.note = v; else delete w.note;
+    editingNote = false; rerender();
+  };
+  const noteCancel = m.querySelector('#ex-note-cancel'); if(noteCancel) noteCancel.onclick = ()=>{ editingNote = false; renderModal(); };
+  const noteDel = m.querySelector('#ex-note-del'); if(noteDel) noteDel.onclick = ()=>{
+    if(!confirm('Delete this note?')) return;
+    delete w.note; editingNote = false; rerender();
+  };
+  // Persist per-exercise rest target on blur (so a tweak survives reloads + the next +Add picks it up automatically).
+  const rs = m.querySelector('#rest-sec'); if(rs) rs.onchange = ()=>{
+    const v = parseInt(rs.value, 10);
+    w.rest = isNaN(v) ? 90 : Math.max(0, v);
+    save();   // no rerender — don't disrupt the inputs the user is mid-filling
+  };
   m.querySelector('#add-set').onclick = ()=>{
     const r = parseLoggedSet(cm, hold, repsOnly, cardio); if(!r) return;
     if(!w.sessions[logDate]) w.sessions[logDate]=[];
@@ -1100,6 +1190,12 @@ function renderModal(){
     if(logDate === today) entry.t = Date.now();   // only stamp time-of-day for sets logged the same day
     w.sessions[logDate].push(entry);
     modalLogged = true;
+    // Auto-start rest timer (only for fresh "today" sets — not backdated entries).
+    if(logDate === today){
+      const rsEl = document.getElementById('rest-sec');
+      const sec = rsEl ? parseInt(rsEl.value, 10) : (w.rest||90);
+      startRest(name, isNaN(sec) ? (w.rest||90) : sec);
+    }
     rerender();
   };
   const et = m.querySelector('#edit-mode'); if(et) et.onclick=()=>{ editMode=!editMode; editingDate=null; renderModal(); };
