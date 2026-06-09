@@ -856,7 +856,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d', editToday = false, editPrior = false;
+let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false;
 let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
@@ -873,7 +873,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d'; editToday = false; editPrior = false;   // default each open to 7 days, view mode
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false;   // default each open to 7 days, view mode
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -887,14 +887,16 @@ function priorExpandedHtml(w, date){
     : hold     ? `best ${fmtDur(sessionBestHold(sets))}`
     : repsOnly ? `${sessionReps(sets)} reps`
     :            `output ${workoutOutput(w, sets).toLocaleString()}`;
-  const list = sets.map((s,i)=>{
-    const {desc, so} = setDescSo(w, s);
-    const hl = (i===sets.length-1) ? setHighlight(w, sets) : '';
-    return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span></div>`;
-  }).join('') || '<div class="muted" style="font-size:13px">No sets on this day.</div>';
+  const body = editMode
+    ? editableSets(w, date)
+    : `<div class="today-sets">${sets.map((s,i)=>{
+        const {desc, so} = setDescSo(w, s);
+        const hl = (i===sets.length-1) ? setHighlight(w, sets) : '';
+        return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span></div>`;
+      }).join('') || '<div class="muted" style="font-size:13px">No sets on this day.</div>'}</div>`;
   return `<div class="prior-expanded">
     <div class="pe-head"><b>${fmtDateLong(date)}</b> <span class="muted" style="font-size:12px">· ${summary}</span></div>
-    <div class="today-sets">${list}</div>
+    ${body}
   </div>`;
 }
 // ============================ WORKOUT MODAL ============================
@@ -922,13 +924,13 @@ function modalLogInputsHtml(cm, hold, repsOnly, cardio){
 }
 // "Today's sets" block: empty state, edit-mode editor, or read-only list with per-set delete.
 function modalTodaySetsHtml(w, todaySets){
-  const header = todaySets.length ? `<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
+  const header = `<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
     <span>Today's sets</span>
-    <button class="btn ghost mini" id="edit-today" style="margin-left:auto">${editToday?'✓ Done':'✎ Edit'}</button>
-  </div>` : '';
+    <button class="btn ghost mini" id="edit-mode" style="margin-left:auto">${editMode?'✓ Done editing':'✎ Edit sets (today &amp; past)'}</button>
+  </div>`;
   let body;
   if(!todaySets.length) body = `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`;
-  else if(editToday)    body = editableSets(w, todayStr());
+  else if(editMode)     body = editableSets(w, todayStr());
   else body = todaySets.map((s,i)=>{
     const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
     const {desc,so} = setDescSo(w, s);
@@ -1069,7 +1071,7 @@ function renderModal(){
     w.sessions[today].push({w:r.wv, r:r.rv, t:Date.now()});
     rerender();
   };
-  const et = m.querySelector('#edit-today'); if(et) et.onclick=()=>{ editToday=!editToday; renderModal(); };
+  const et = m.querySelector('#edit-mode'); if(et) et.onclick=()=>{ editMode=!editMode; renderModal(); };
   m.querySelectorAll('[data-rm]').forEach(b=> b.onclick=()=>{
     const i = +b.dataset.rm;
     w.sessions[today].splice(i,1);
@@ -1078,10 +1080,8 @@ function renderModal(){
   });
   m.querySelectorAll('[data-prior]').forEach(c=> c.onclick=()=>{
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
-    editPrior = false;            // open a prior day read-only; Edit button expands it
     renderModal();
   });
-  const ep = m.querySelector('#edit-prior'); if(ep) ep.onclick=()=>{ editPrior=!editPrior; renderModal(); };
   const ct = m.querySelector('#charts-toggle'); if(ct) ct.onclick=()=>{ chartsOpen=!chartsOpen; localStorage.setItem('wt_chartsOpen', chartsOpen?'1':'0'); renderModal(); };
   // editable set rows for today (edit mode) and the open prior day — both scoped by data-editdate
   wireSetEditors(m, w);
@@ -1233,24 +1233,19 @@ function priorDetailHtml(name){
     : repsOnly ? `${fmtDateLong(modalPriorDate)} · ${sessionReps(sets)} reps`
     : cardio ? `${fmtDateLong(modalPriorDate)}`
     : `${fmtDateLong(modalPriorDate)} · output ${workoutOutput(w, sets).toLocaleString()}`;
-  if(editPrior){
+  if(editMode){
     return `<div class="prior-edit">
-      <div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:4px">
-        <span>${head}</span>
-        <button class="btn ghost mini" id="edit-prior" style="margin-left:auto">✓ Done</button></div>
+      <div class="block-title" style="margin-top:4px">${head}</div>
       <div class="modal-sub" style="margin:-2px 0 8px">Edit the numbers below — the date stays ${fmtDate(modalPriorDate)}.</div>
       ${editableSets(w, modalPriorDate)}
     </div>`;
   }
-  // read-only by default: show reps / weight / output; Edit button expands the editor
   const list = sets.length
     ? sets.map(s=>{ const {desc,so}=setDescSo(w,s);
         return `<div class="set-line"><span>${desc}</span><span class="so">${so}</span></div>`; }).join('')
     : '<div class="muted" style="font-size:13px">No sets on this day.</div>';
   return `<div class="prior-edit">
-    <div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:4px">
-      <span>${head}</span>
-      ${sets.length?`<button class="btn ghost mini" id="edit-prior" style="margin-left:auto">✎ Edit</button>`:''}</div>
+    <div class="block-title" style="margin-top:4px">${head}</div>
     <div class="today-sets">${list}</div>
   </div>`;
 }
