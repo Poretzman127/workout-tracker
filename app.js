@@ -936,7 +936,7 @@ function modalLogInputsHtml(cm, hold, repsOnly, cardio){
 function modalTodaySetsHtml(w, todaySets){
   const header = `<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
     <span>Today's sets</span>
-    <button class="btn ghost mini" id="edit-mode" style="margin-left:auto">${editMode?'✓ Done editing':'✎ Edit sets (today &amp; past)'}</button>
+    <button class="btn ghost mini" id="edit-mode" style="margin-left:auto">${editMode?'✓ Done':'✎ Edit'}</button>
   </div>`;
   let body;
   if(!todaySets.length) body = `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`;
