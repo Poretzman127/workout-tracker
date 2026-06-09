@@ -877,7 +877,17 @@ function openWorkout(name){
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
-function closeWorkout(){ document.getElementById('w-overlay').classList.remove('show'); modalName=null; }
+function closeWorkout(){
+  const w = modalName && DATA.workouts[modalName];
+  document.getElementById('w-overlay').classList.remove('show');
+  modalName=null;
+  if(w){
+    requestAnimationFrame(()=>{
+      const head = document.querySelector(`.section-head[data-toggle="${w.group}"]`);
+      if(head) head.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+  }
+}
 // Read-only expanded view of one prior session — used to auto-show the last 3 sessions
 // in the workout modal so the user doesn't have to click chips to see them.
 function priorExpandedHtml(w, date){
