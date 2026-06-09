@@ -856,7 +856,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false;
+let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null;
 let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
@@ -873,7 +873,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false;   // default each open to 7 days, view mode
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null;   // default each open to 7 days, view mode
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -897,14 +897,15 @@ function priorExpandedHtml(w, date){
     : hold     ? `best ${fmtDur(sessionBestHold(sets))}`
     : repsOnly ? `${sessionReps(sets)} reps`
     :            `output ${workoutOutput(w, sets).toLocaleString()}`;
-  const body = editMode
+  const picking = editMode && editingDate !== date;
+  const body = (editMode && editingDate === date)
     ? editableSets(w, date)
     : `<div class="today-sets">${sets.map((s,i)=>{
         const {desc, so} = setDescSo(w, s);
         const hl = (i===sets.length-1) ? setHighlight(w, sets) : '';
         return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span></div>`;
       }).join('') || '<div class="muted" style="font-size:13px">No sets on this day.</div>'}</div>`;
-  return `<div class="prior-expanded">
+  return `<div class="prior-expanded${picking?' edit-pick':''}"${picking?` data-editpick="${date}"`:''}>
     <div class="pe-head"><b>${fmtDateLong(date)}</b> <span class="muted" style="font-size:12px">· ${summary}</span></div>
     ${body}
   </div>`;
@@ -938,15 +939,18 @@ function modalTodaySetsHtml(w, todaySets){
     <span>Today's sets</span>
     <button class="btn ghost mini" id="edit-mode" style="margin-left:auto">${editMode?'✓ Done':'✎ Edit'}</button>
   </div>`;
+  const today = todayStr();
+  const picking = editMode && editingDate !== today && todaySets.length;
   let body;
   if(!todaySets.length) body = `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`;
-  else if(editMode)     body = editableSets(w, todayStr());
+  else if(editMode && editingDate === today) body = editableSets(w, today);
   else body = todaySets.map((s,i)=>{
     const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
     const {desc,so} = setDescSo(w, s);
-    return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span><button class="del" data-rm="${i}">×</button></div>`;
+    const delBtn = editMode ? '' : `<button class="del" data-rm="${i}">×</button>`;
+    return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span>${delBtn}</div>`;
   }).join('');
-  return `${header}<div class="today-sets" id="today-sets">${body}</div>`;
+  return `${header}<div class="today-sets${picking?' edit-pick':''}" id="today-sets"${picking?` data-editpick="${today}"`:''}>${body}</div>`;
 }
 // Recent (top-3 expanded) + older (chip list + click-to-show detail) sessions.
 function modalPriorSessionsHtml(w, dts, today, name){
@@ -1081,7 +1085,11 @@ function renderModal(){
     w.sessions[today].push({w:r.wv, r:r.rv, t:Date.now()});
     rerender();
   };
-  const et = m.querySelector('#edit-mode'); if(et) et.onclick=()=>{ editMode=!editMode; renderModal(); };
+  const et = m.querySelector('#edit-mode'); if(et) et.onclick=()=>{ editMode=!editMode; editingDate=null; renderModal(); };
+  m.querySelectorAll('[data-editpick]').forEach(el=> el.onclick=(e)=>{
+    if(e.target.closest('.set-editor')) return;   // don't re-pick while interacting with the editor
+    editingDate = el.dataset.editpick; renderModal();
+  });
   m.querySelectorAll('[data-rm]').forEach(b=> b.onclick=()=>{
     const i = +b.dataset.rm;
     w.sessions[today].splice(i,1);
@@ -1090,6 +1098,7 @@ function renderModal(){
   });
   m.querySelectorAll('[data-prior]').forEach(c=> c.onclick=()=>{
     modalPriorDate = (modalPriorDate===c.dataset.prior)?null:c.dataset.prior;
+    if(editMode && modalPriorDate) editingDate = modalPriorDate;   // chip = explicit pick in edit mode
     renderModal();
   });
   const ct = m.querySelector('#charts-toggle'); if(ct) ct.onclick=()=>{ chartsOpen=!chartsOpen; localStorage.setItem('wt_chartsOpen', chartsOpen?'1':'0'); renderModal(); };
@@ -1243,18 +1252,19 @@ function priorDetailHtml(name){
     : repsOnly ? `${fmtDateLong(modalPriorDate)} · ${sessionReps(sets)} reps`
     : cardio ? `${fmtDateLong(modalPriorDate)}`
     : `${fmtDateLong(modalPriorDate)} · output ${workoutOutput(w, sets).toLocaleString()}`;
-  if(editMode){
+  if(editMode && editingDate === modalPriorDate){
     return `<div class="prior-edit">
       <div class="block-title" style="margin-top:4px">${head}</div>
       <div class="modal-sub" style="margin:-2px 0 8px">Edit the numbers below — the date stays ${fmtDate(modalPriorDate)}.</div>
       ${editableSets(w, modalPriorDate)}
     </div>`;
   }
+  const picking = editMode && sets.length;
   const list = sets.length
     ? sets.map(s=>{ const {desc,so}=setDescSo(w,s);
         return `<div class="set-line"><span>${desc}</span><span class="so">${so}</span></div>`; }).join('')
     : '<div class="muted" style="font-size:13px">No sets on this day.</div>';
-  return `<div class="prior-edit">
+  return `<div class="prior-edit${picking?' edit-pick':''}"${picking?` data-editpick="${modalPriorDate}"`:''}>
     <div class="block-title" style="margin-top:4px">${head}</div>
     <div class="today-sets">${list}</div>
   </div>`;

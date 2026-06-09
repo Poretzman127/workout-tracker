@@ -89,6 +89,8 @@
   .prior-expanded{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 10px;}
   .prior-expanded .pe-head{margin-bottom:6px;font-size:13px;}
   .prior-expanded .today-sets{margin-top:0;}
+  .edit-pick{cursor:pointer;box-shadow:0 0 0 2px rgba(52,211,153,.6);border-radius:10px;transition:background .12s;}
+  .edit-pick:hover,.edit-pick:active{background:rgba(52,211,153,.08);}
   .hl-green{background:rgba(52,211,153,.16)!important;border-color:var(--accent)!important;color:var(--accent)!important;}
   .hl-yellow{background:rgba(245,197,66,.16)!important;border-color:var(--warn)!important;color:var(--warn)!important;}
   .hl-red{background:rgba(255,107,74,.16)!important;border-color:var(--hot)!important;color:var(--hot)!important;}
