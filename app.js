@@ -857,7 +857,7 @@ function metricRow(name, w){
 }
 
 /* ----- workout modal ----- */
-let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null, modalLogged = false;
+let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null, modalLogged = false, logDate = null;
 let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
 const RANGES = {'7d':7, '15d':15, '30d':30, '1y':365, 'all':null};
@@ -874,7 +874,7 @@ function rangeToggle(){
     `<button class="range-btn${modalRange===r?' active':''}" data-range="${r}">${RANGE_LABEL[r]}</button>`).join('')}</div>`;
 }
 function openWorkout(name){
-  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null; modalLogged = false;   // default each open to 7 days, view mode
+  modalName = name; modalPriorDate = null; modalRange = '7d'; editMode = false; editingDate = null; modalLogged = false; logDate = todayStr();   // default each open to 7 days, view mode, today's date for logging
   renderModal();
   document.getElementById('w-overlay').classList.add('show');
 }
@@ -935,28 +935,33 @@ function modalLogInputsHtml(cm, hold, repsOnly, cardio){
   return `<div class="field"><label>Weight</label><input class="num" id="in-w" type="number" inputmode="decimal" step="any" placeholder="135"></div>
     <div class="field"><label>Reps</label><input class="num" id="in-r" type="number" inputmode="numeric" step="any" placeholder="10"></div>`;
 }
-// "Today's sets" block: empty state, edit-mode editor, or read-only list with per-set delete.
-function modalTodaySetsHtml(w, todaySets){
+// "Sets on <date>" block: empty state, edit-mode editor, or read-only list with per-set delete.
+// `date` is the currently selected log date (today by default).
+function modalTodaySetsHtml(w, daySets, date){
+  const isToday = date === todayStr();
+  const title = isToday ? "Today's sets" : `Sets on ${fmtDate(date)}`;
   const header = `<div class="block-title" style="display:flex;align-items:center;gap:8px;margin-top:14px">
-    <span>Today's sets</span>
+    <span>${title}</span>
     <button class="btn ghost mini" id="edit-mode" style="margin-left:auto">${editMode?'✓ Done':'✎ Edit'}</button>
   </div>`;
-  const today = todayStr();
-  const picking = editMode && editingDate !== today && todaySets.length;
+  const picking = editMode && editingDate !== date && daySets.length;
+  const empty = isToday ? 'No sets logged today yet.' : 'No sets on this day yet.';
   let body;
-  if(!todaySets.length) body = `<div class="muted" style="font-size:13px">No sets logged today yet.</div>`;
-  else if(editMode && editingDate === today) body = editableSets(w, today);
-  else body = todaySets.map((s,i)=>{
-    const hl = (i===todaySets.length-1) ? setHighlight(w, todaySets) : '';
+  if(!daySets.length) body = `<div class="muted" style="font-size:13px">${empty}</div>`;
+  else if(editMode && editingDate === date) body = editableSets(w, date);
+  else body = daySets.map((s,i)=>{
+    const hl = (i===daySets.length-1) ? setHighlight(w, daySets) : '';
     const {desc,so} = setDescSo(w, s);
     const delBtn = editMode ? '' : `<button class="del" data-rm="${i}">×</button>`;
     return `<div class="set-line${hl?' '+hl:''}"><span>${desc}</span><span class="so">${so}</span>${delBtn}</div>`;
   }).join('');
-  return `${header}<div class="today-sets${picking?' edit-pick':''}" id="today-sets"${picking?` data-editpick="${today}"`:''}>${body}</div>`;
+  return `${header}<div class="today-sets${picking?' edit-pick':''}" id="today-sets"${picking?` data-editpick="${date}"`:''}>${body}</div>`;
 }
 // Recent (top-3 expanded) + older (chip list + click-to-show detail) sessions.
-function modalPriorSessionsHtml(w, dts, today, name){
-  const priorAll = dts.filter(d=>d!==today).slice().reverse();   // newest first
+// `pinDate` = the date that's already rendered in the "Sets on …" block above; we
+// exclude it here to avoid duplicating it in the Recent list.
+function modalPriorSessionsHtml(w, dts, pinDate, name){
+  const priorAll = dts.filter(d=>d!==pinDate).slice().reverse();   // newest first
   const top3 = priorAll.slice(0,3);
   const older = priorAll.slice(3);
   const expanded = top3.length
@@ -1028,7 +1033,8 @@ function renderModal(){
   const gid = w.group, cardio = groupKind(gid)==='cardio';
   const dts = sortedDates(w.sessions);
   const today = todayStr();
-  const todaySets = w.sessions[today] || [];
+  if(!logDate) logDate = today;
+  const daySets = w.sessions[logDate] || [];
 
   const cm = cardio ? cardioMode(w) : null;
   const hold = isHold(w), repsOnly = isRepsOnly(w);
@@ -1058,13 +1064,14 @@ function renderModal(){
       <a href="${w.demo}" target="_blank" rel="noopener">▶ form demo</a> ·
       ${dts.length} session${dts.length===1?'':'s'} logged</div>
     ${modalModeTogglesHtml(w, cm, hold, repsOnly)}
-    <div class="block-title">Log a set you just did (${fmtDateLong(today)})</div>
+    <div class="block-title">Log a set ${logDate===today?'you just did':'for a past day'}</div>
     <div class="field-row">
+      <div class="field"><label>Date</label><input id="log-date" type="date" value="${logDate}" max="${today}"></div>
       ${modalLogInputsHtml(cm, hold, repsOnly, cardio)}
       <button class="btn" id="add-set">+ Add set</button>
     </div>
-    ${modalTodaySetsHtml(w, todaySets)}
-    ${modalPriorSessionsHtml(w, dts, today, name)}
+    ${modalTodaySetsHtml(w, daySets, logDate)}
+    ${modalPriorSessionsHtml(w, dts, logDate, name)}
     ${modalChartsHtml(cardio, cm, hold, repsOnly, ptsOut, ptsRep, ptsSet, lastOut, lastRep, lastSet)}
   `;
   // ----- wire handlers -----
@@ -1081,10 +1088,17 @@ function renderModal(){
     rerender();
   });
   m.querySelectorAll('[data-range]').forEach(b=> b.onclick=()=>{ modalRange=b.dataset.range; renderModal(); });
+  const ld = m.querySelector('#log-date'); if(ld) ld.onchange = ()=>{
+    logDate = ld.value || todayStr();
+    editingDate = null;   // a date switch shouldn't keep a stale edit-target highlighted
+    renderModal();
+  };
   m.querySelector('#add-set').onclick = ()=>{
     const r = parseLoggedSet(cm, hold, repsOnly, cardio); if(!r) return;
-    if(!w.sessions[today]) w.sessions[today]=[];
-    w.sessions[today].push({w:r.wv, r:r.rv, t:Date.now()});
+    if(!w.sessions[logDate]) w.sessions[logDate]=[];
+    const entry = {w:r.wv, r:r.rv};
+    if(logDate === today) entry.t = Date.now();   // only stamp time-of-day for sets logged the same day
+    w.sessions[logDate].push(entry);
     modalLogged = true;
     rerender();
   };
@@ -1095,8 +1109,8 @@ function renderModal(){
   });
   m.querySelectorAll('[data-rm]').forEach(b=> b.onclick=()=>{
     const i = +b.dataset.rm;
-    w.sessions[today].splice(i,1);
-    if(!w.sessions[today].length) delete w.sessions[today];
+    w.sessions[logDate].splice(i,1);
+    if(!w.sessions[logDate].length) delete w.sessions[logDate];
     rerender();
   });
   m.querySelectorAll('[data-prior]').forEach(c=> c.onclick=()=>{
