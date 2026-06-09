@@ -350,7 +350,7 @@ function setHighlight(w, sets){
   if(!sets || sets.length<2 || groupKind(w.group)==='cardio' || isMetric(w) || isHold(w) || isRepsOnly(w)) return '';
   const a=sets[sets.length-2], b=sets[sets.length-1];
   // every lift set gets a color vs the prior set: matched/beat = green, pushed heavier but fewer reps = red, otherwise = yellow (still grinding)
-  if(b.w>=a.w && b.r>=a.r) return 'hl-green';
+  if(b.w===a.w && b.r===a.r) return 'hl-green';
   if(b.w> a.w && b.r< a.r) return 'hl-red';
   return 'hl-yellow';
 }
