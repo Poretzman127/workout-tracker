@@ -915,7 +915,12 @@ function ensureRestEl(){
 }
 function wireRestChip(el){
   const stop = el.querySelector('[data-rt-stop]'); if(stop) stop.onclick = stopRest;
-  el.querySelectorAll('[data-rt]').forEach(b=> b.onclick = ()=> startRest(restExName, +b.dataset.rt));
+  el.querySelectorAll('[data-rt]').forEach(b=> b.onclick = ()=>{
+    const sec = +b.dataset.rt;
+    // Persist the user's choice as this exercise's new default rest target.
+    const w = DATA.workouts[restExName]; if(w){ w.rest = sec; save(); }
+    startRest(restExName, sec);
+  });
 }
 function tickRest(){
   const el = ensureRestEl();
@@ -1187,7 +1192,6 @@ function renderModal(){
     <div class="block-title">Log a set ${logDate===today?'you just did':'for a past day'}</div>
     <div class="field-row">
       ${modalLogInputsHtml(cm, hold, repsOnly, cardio)}
-      <div class="field"><label>Rest (s)</label><input class="num" id="rest-sec" type="number" inputmode="numeric" step="any" value="${w.rest==null?90:w.rest}" placeholder="90" style="width:70px" title="0 = no auto-start"></div>
     </div>
     <div class="field-row">
       <div class="field"><label>Date</label><input id="log-date" type="date" value="${logDate}" max="${today}"></div>
@@ -1230,12 +1234,6 @@ function renderModal(){
     if(!confirm('Delete this note?')) return;
     delete w.note; editingNote = false; rerender();
   };
-  // Persist per-exercise rest target on blur (so a tweak survives reloads + the next +Add picks it up automatically).
-  const rs = m.querySelector('#rest-sec'); if(rs) rs.onchange = ()=>{
-    const v = parseInt(rs.value, 10);
-    w.rest = isNaN(v) ? 90 : Math.max(0, v);
-    save();   // no rerender — don't disrupt the inputs the user is mid-filling
-  };
   m.querySelector('#add-set').onclick = ()=>{
     const r = parseLoggedSet(cm, hold, repsOnly, cardio); if(!r) return;
     primeRestAudio();   // user-gesture moment — iOS Safari needs this to allow the beep later
@@ -1245,11 +1243,8 @@ function renderModal(){
     w.sessions[logDate].push(entry);
     modalLogged = true;
     // Auto-start rest timer (only for fresh "today" sets — not backdated entries).
-    if(logDate === today){
-      const rsEl = document.getElementById('rest-sec');
-      const sec = rsEl ? parseInt(rsEl.value, 10) : (w.rest||90);
-      startRest(name, isNaN(sec) ? (w.rest||90) : sec);
-    }
+    // Default 90s; a quick-set button tap inside the chip persists a custom value on w.rest.
+    if(logDate === today) startRest(name, w.rest || 90);
     rerender();
   };
   const et = m.querySelector('#edit-mode'); if(et) et.onclick=()=>{ editMode=!editMode; editingDate=null; renderModal(); };
