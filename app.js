@@ -859,9 +859,54 @@ function metricRow(name, w){
 /* ----- workout modal ----- */
 let modalName = null, modalPriorDate = null, modalRange = '7d', editMode = false, editingDate = null, modalLogged = false, logDate = null, editingNote = false;
 // Rest timer — page-global so it survives modal close (user often closes the lift modal between sets)
-let restEndTs = 0, restExName = '', restTickIv = null;
+let restEndTs = 0, restExName = '', restTickIv = null, restWakeLock = null, restAudio = null, restOrigTitle = '', restTitleIv = null;
 const REST_QUICK = [30, 60, 90, 120, 180];
 function fmtSec(s){ s = Math.max(0, s|0); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`; }
+// Prime the AudioContext on the user's +Add set tap. iOS Safari requires audio to be
+// initiated from a user gesture; once primed we can play from a setInterval callback.
+function primeRestAudio(){
+  if(restAudio) return;
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(AC){ restAudio = new AC(); if(restAudio.state === 'suspended') restAudio.resume().catch(()=>{}); }
+  }catch(e){}
+}
+function beepRest(){
+  if(!restAudio) return;
+  try{
+    if(restAudio.state === 'suspended') restAudio.resume().catch(()=>{});
+    const now = restAudio.currentTime;
+    // 3-tone ascending chime, 0.18s spacing
+    [660, 880, 1175].forEach((freq, i) => {
+      const osc = restAudio.createOscillator(), gain = restAudio.createGain();
+      osc.type = 'sine'; osc.frequency.value = freq;
+      osc.connect(gain); gain.connect(restAudio.destination);
+      const start = now + i*0.18, stop = start + 0.14;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.35, start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, stop);
+      osc.start(start); osc.stop(stop + 0.02);
+    });
+  }catch(e){}
+}
+// Flash the tab title so a user on another tab/app still notices (most useful at home on laptop).
+function startTitleFlash(name){
+  stopTitleFlash();
+  restOrigTitle = restOrigTitle || document.title;
+  let on = true;
+  restTitleIv = setInterval(()=>{ document.title = on ? `✅ REST DONE — ${name}` : restOrigTitle; on = !on; }, 800);
+}
+function stopTitleFlash(){
+  if(restTitleIv){ clearInterval(restTitleIv); restTitleIv = null; }
+  if(restOrigTitle) document.title = restOrigTitle;
+}
+// Screen wake lock so the phone screen doesn't dim while the user is waiting between sets.
+async function acquireRestWake(){
+  try{ if('wakeLock' in navigator) restWakeLock = await navigator.wakeLock.request('screen'); }catch(e){}
+}
+function releaseRestWake(){
+  if(restWakeLock){ try{ restWakeLock.release(); }catch(e){} restWakeLock = null; }
+}
 function escHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function ensureRestEl(){
   let el = document.getElementById('rest-chip');
@@ -890,21 +935,27 @@ function tickRest(){
         <span class="rt-name">${escHtml(restExName)}</span>
         <button class="rt-x" data-rt-stop title="Dismiss">✕</button>`;
       wireRestChip(el);
-      try{ if(navigator.vibrate) navigator.vibrate([220,90,220,90,440]); }catch(e){}
+      try{ if(navigator.vibrate) navigator.vibrate([220,90,220,90,440]); }catch(e){}   // Android only — iOS Safari ignores
+      beepRest();                       // iOS-friendly audio chime (also fires on Android)
+      startTitleFlash(restExName);      // tab-title attention grab for laptop / backgrounded tab
     }
-    if(now - restEndTs > 10000) stopRest();   // auto-dismiss 10s after end
+    if(now - restEndTs > 10000){ stopRest(); }   // auto-dismiss 10s after end
   }
 }
 function startRest(name, sec){
   if(!(sec>0)) return;   // 0 / negative means timer disabled for this exercise
   restExName = name; restEndTs = Date.now() + sec*1000;
   if(!restTickIv) restTickIv = setInterval(tickRest, 500);   // 500ms so the visible second flips snappily
+  stopTitleFlash();   // a fresh timer cancels any leftover "done" title flash from the previous set
+  acquireRestWake();  // keep the screen on during the wait so the user sees + hears the end
   tickRest();
 }
 function stopRest(){
   restEndTs = 0; restExName = '';
   if(restTickIv){ clearInterval(restTickIv); restTickIv = null; }
   const el = document.getElementById('rest-chip'); if(el){ el.classList.remove('show','done'); el.innerHTML = ''; }
+  stopTitleFlash();
+  releaseRestWake();
 }
 let chartsOpen = (localStorage.getItem('wt_chartsOpen') !== '0');   // collapsible per-workout chart block (global toggle, default open)
 // chart time-range filter
@@ -1187,6 +1238,7 @@ function renderModal(){
   };
   m.querySelector('#add-set').onclick = ()=>{
     const r = parseLoggedSet(cm, hold, repsOnly, cardio); if(!r) return;
+    primeRestAudio();   // user-gesture moment — iOS Safari needs this to allow the beep later
     if(!w.sessions[logDate]) w.sessions[logDate]=[];
     const entry = {w:r.wv, r:r.rv};
     if(logDate === today) entry.t = Date.now();   // only stamp time-of-day for sets logged the same day
