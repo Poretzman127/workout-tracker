@@ -2134,7 +2134,7 @@ function setupNureli(){
     <div class="nureli-stage">
       <canvas id="fw"></canvas>
       <div class="nureli-content">
-        <div class="nureli-title">NURELI IS A BOSS</div>
+        <div class="nureli-title">VICTOR IS A BOSS</div>
         <div class="nureli-sub">👑 absolute legend · certified boss 👑</div>
       </div>
     </div>`;

@@ -1,4 +1,4 @@
-const CACHE = 'wt-shell-v4';
+const CACHE = 'wt-shell-v5';
 const SHELL = [
   './',
   './index.html',
